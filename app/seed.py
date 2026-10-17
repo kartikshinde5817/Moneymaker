@@ -39,7 +39,6 @@ DEFAULT_CAMPAIGNS = [
         "sources": [
             "serper",            # free tier - explicit "need a website" posts
             "linkedin_search",   # free tier - LinkedIn posts, via the search index
-            "yelp",              # free key  - US businesses with site + phone
             "contracts_finder",  # free      - public-sector website redesigns
             "companies_house",   # free key  - new UK firms, no website yet
             "openstreetmap",     # free      - fallback, low email yield
@@ -121,10 +120,6 @@ FREE_KEY_PRIORITY = [
      "url": "https://sam.gov/content/api-keys", "free": "free",
      "why": "US federal opportunities. Same value as UK tenders, for the US "
             "computer-vision campaign."},
-    {"key": "YELP_API_KEY", "name": "Yelp Fusion",
-     "url": "https://docs.developer.yelp.com", "free": "free tier",
-     "why": "US local businesses with website and phone on file. Replaces the "
-            "paid Google Places for the US web-development campaign."},
 ]
 
 

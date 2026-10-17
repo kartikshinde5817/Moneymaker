@@ -69,7 +69,6 @@ prompt instructions:
 | **Companies House** | UK companies incorporated in the last 90 days — no website yet | Free key |
 | **Adzuna** | Job ads. Hiring a CV engineer proves budget was approved | Free tier |
 | **Google Places** | Best business coverage, phone and website | Paid |
-| **Yelp** | US small-business coverage | Free key |
 | **SAM.gov** | US federal opportunities | Free key |
 | **GitHub** | ⚠️ **Low quality — off by default.** Tested live, it returns the OpenCV project, Microsoft and research repos. A company with a CV repo already does CV in-house, so these read as competitors | Free |
 | **Website audit** | Runs on every lead — see below | Built in |
@@ -85,7 +84,7 @@ So contactable sources come first.
 
 | Campaign | Sources, best first |
 |---|---|
-| **Web Development** | Web search · Yelp · Contracts Finder · Companies House · OpenStreetMap |
+| **Web Development** | Web search · Contracts Finder · Companies House · OpenStreetMap |
 | **Computer Vision** | Contracts Finder · Find a Tender · Adzuna · SAM.gov · Web search |
 | **AI Agents & Chatbots** | Web search · Adzuna · Contracts Finder · Find a Tender · Hacker News |
 | **AI Automation** | Web search · Adzuna · Contracts Finder · Find a Tender |
@@ -99,7 +98,6 @@ with direct links and shows which are set:
 | 2 | [Adzuna](https://developer.adzuna.com) | free tier | Job ads — hiring a CV engineer proves budget exists |
 | 3 | [Companies House](https://developer.company-information.service.gov.uk) | free | Every UK company incorporated in the last 90 days |
 | 4 | [SAM.gov](https://sam.gov/content/api-keys) | free | US federal opportunities |
-| 5 | [Yelp Fusion](https://docs.developer.yelp.com) | free tier | US local businesses — replaces paid Google Places |
 
 Working right now with **no key at all**: UK Contracts Finder, UK Find a
 Tender, Hacker News, OpenStreetMap.

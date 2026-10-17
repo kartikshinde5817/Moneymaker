@@ -849,7 +849,6 @@ def _key_configured(name: str) -> bool:
         "Adzuna": bool(settings.adzuna_app_id and settings.adzuna_app_key),
         "Companies House": bool(settings.companies_house_key),
         "SAM.gov": bool(getattr(settings, "sam_gov_api_key", "")),
-        "Yelp Fusion": bool(getattr(settings, "yelp_api_key", "")),
     }.get(name, False)
 
 
