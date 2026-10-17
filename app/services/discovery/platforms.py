@@ -333,4 +333,3 @@ class YelpSource:
 
 register(SerperSource())
 register(GitHubSource())
-register(YelpSource())

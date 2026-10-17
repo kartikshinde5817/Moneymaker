@@ -68,7 +68,6 @@ prompt instructions:
 | **OpenStreetMap** | Local businesses to audit | Free, none |
 | **Companies House** | UK companies incorporated in the last 90 days — no website yet | Free key |
 | **Adzuna** | Job ads. Hiring a CV engineer proves budget was approved | Free tier |
-| **Google Places** | Best business coverage, phone and website | Paid |
 | **SAM.gov** | US federal opportunities | Free key |
 | **GitHub** | ⚠️ **Low quality — off by default.** Tested live, it returns the OpenCV project, Microsoft and research repos. A company with a CV repo already does CV in-house, so these read as competitors | Free |
 | **Website audit** | Runs on every lead — see below | Built in |
@@ -288,7 +287,6 @@ capability.
 | Variable | Effect if unset |
 |---|---|
 | `ANTHROPIC_API_KEY` | Outreach is written from deterministic templates |
-| `GOOGLE_PLACES_KEY` | That source is skipped |
 | `COMPANIES_HOUSE_KEY` | That source is skipped (free key) |
 | `ADZUNA_APP_ID` / `_KEY` | That source is skipped (free tier) |
 | `SMTP_*` | Drafts queue but cannot be sent |

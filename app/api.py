@@ -788,7 +788,6 @@ def read_settings():
         "min_score_to_email": settings.min_score_to_email,
         "configured": {
             "anthropic_api_key": bool(settings.anthropic_api_key),
-            "google_places_key": bool(settings.google_places_key),
             "companies_house_key": bool(settings.companies_house_key),
             "adzuna": bool(settings.adzuna_app_id and settings.adzuna_app_key),
             "smtp": bool(settings.smtp_host),

@@ -854,7 +854,6 @@ VIEWS.settings = async function () {
          but can only use free sources and cannot send.</p>
       <div style="display:grid;gap:8px">
         ${[['ANTHROPIC_API_KEY', 'anthropic_api_key', 'AI-written outreach (falls back to templates)'],
-           ['GOOGLE_PLACES_KEY', 'google_places_key', 'Business listings — best coverage'],
            ['COMPANIES_HOUSE_KEY', 'companies_house_key', 'New UK companies — free key'],
            ['ADZUNA_APP_ID / KEY', 'adzuna', 'Job-ad hiring signals — free tier'],
            ['SMTP_HOST / USER / PASS', 'smtp', 'Sending email']]

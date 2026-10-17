@@ -529,7 +529,6 @@ class OpenStreetMapSource:
         return out
 
 
-register(GooglePlacesSource())
 register(CompaniesHouseSource())
 register(AdzunaSource())
 register(HackerNewsSource())
