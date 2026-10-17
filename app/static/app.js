@@ -85,7 +85,7 @@ function renderFoot() {
     c(META.scheduler_enabled, 'Scheduler on', 'Scheduler off') +
     c(META.telegram_ready, 'Telegram on', 'No Telegram') +
     c(META.inbox_ready, 'Reply watch on', 'No IMAP') +
-    `<div style="margin-top:8px">Targeting UK &amp; US. Germany, Austria and Russia are excluded from email by law.</div>`;
+    `<div style="margin-top:8px">Email only to the countries listed in Settings. All others are manual outreach only.</div>`;
 }
 
 const VIEWS = {};
@@ -914,11 +914,11 @@ VIEWS.settings = async function () {
     </div>
 
     <div class="card"><h3>Where email is permitted</h3>
-      <p class="hint">Enforced in the database, not by convention. A company in a blocked
-         country cannot be emailed by any route in this application.</p>
+      <p class="hint">These are the only countries we email. Companies elsewhere are kept for
+         manual outreach and can never be emailed by any route in this application.</p>
       ${Object.entries(META.country_policy || {}).map(([code, p]) => `
         <div class="row" style="padding:6px 0;border-top:1px solid var(--line);font-size:12.5px">
-          <b style="min-width:26px">${esc(code)}</b>
+          <b style="min-width:150px">${esc(p.name || code)} <span class="muted">(${esc(code)})</span></b>
           <span class="pill ${p.policy === 'allowed' ? 'sent' : p.policy === 'blocked' ? 'rejected' : 'pending_approval'}">${esc(p.policy.replace('_', ' '))}</span>
           <span class="muted">${esc(p.reason)}</span></div>`).join('')}
     </div>`;

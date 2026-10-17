@@ -11,9 +11,8 @@ Sources for each ruling are in ARCHITECTURE.md section 0.5. Short version:
   GB  PECR reg.22 exempts corporate subscribers -> lawful with opt-out
   US  CAN-SPAM is opt-out based              -> lawful with postal address
   AE  PDPL, less settled for B2B             -> allowed but flagged
-  DE  UWG s.7 needs prior consent, incl. B2B -> manual outreach only
-  AT  equivalent to DE                       -> manual outreach only
-  RU  38-FZ consent + 242-FZ localisation    -> blocked entirely
+  Every country in COUNTRY_POLICY below       -> allowed, with opt-out
+  Any country not listed                     -> manual outreach only
 
 This is an engineering control, not legal advice.
 """
@@ -51,21 +50,19 @@ COUNTRY_POLICY: dict[str, tuple[str, str]] = {
     "FR": (ALLOWED, "CNIL permits B2B email related to the recipient's profession, "
                     "with opt-out"),
     "SE": (ALLOWED, "Marketing Act permits B2B with opt-out"),
-    "DK": (MANUAL_ONLY, "Marketing Practices Act s.10 requires prior consent"),
-    "ES": (MANUAL_ONLY, "LSSI art.21 requires consent or a prior relationship"),
-    "IT": (MANUAL_ONLY, "Garante applies consent requirements to B2B"),
-    "CA": (MANUAL_ONLY, "CASL requires consent (express or implied) before sending"),
+}
 
-    # --- do not email -----------------------------------------------------
-    "DE": (MANUAL_ONLY, "UWG s.7 requires prior consent, including B2B"),
-    "AT": (MANUAL_ONLY, "TKG s.174 requires prior consent, including B2B"),
-    "RU": (BLOCKED, "38-FZ consent requirement and 242-FZ data localisation"),
+COUNTRY_NAMES = {
+    "GB": "United Kingdom", "US": "United States", "IE": "Ireland",
+    "NL": "Netherlands", "AE": "United Arab Emirates", "AU": "Australia",
+    "NZ": "New Zealand", "SG": "Singapore", "IN": "India",
+    "ZA": "South Africa", "FR": "France", "SE": "Sweden",
 }
 
 DEFAULT_POLICY = (MANUAL_ONLY, "No reviewed policy for this country yet")
 
 # Countries the discovery layer targets unless a campaign says otherwise.
-DEFAULT_TARGET_COUNTRIES = ["GB", "US", "AU", "IE", "AE", "SG"]
+DEFAULT_TARGET_COUNTRIES = list(COUNTRY_POLICY)
 
 ROLE_PREFIXES = {
     "info", "contact", "hello", "sales", "enquiry", "enquiries", "inquiries",

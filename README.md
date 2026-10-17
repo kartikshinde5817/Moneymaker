@@ -234,9 +234,8 @@ blocked country.
 | **United States** | Allowed | CAN-SPAM is opt-out based |
 | **United Kingdom** | Allowed | PECR reg. 22 exempts corporate subscribers |
 | **Ireland, Netherlands, UAE** | Allowed | Equivalent B2B provisions |
-| **Canada** | Manual only | CASL requires consent before sending |
-| **Germany, Austria** | **Manual only** | UWG §7 requires prior consent, including B2B |
-| **Russia** | **Blocked** | 38-FZ consent rule and 242-FZ data localisation |
+| **Australia, New Zealand, Singapore, India, South Africa, France, Sweden** | Allowed | Opt-out regimes |
+| **Any other country** | Manual only | No reviewed policy; reach by LinkedIn or phone |
 
 German law firms pursue unsolicited B2B email commercially, with billable
 warning notices. Those leads are still collected and shown — reach them by

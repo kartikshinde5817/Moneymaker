@@ -19,7 +19,7 @@ from app.models import (
     WebsiteAudit, WhatsAppMessage, utcnow,
 )
 from app.services import ai, inbox, linkedin, mailer, notify, pipeline, scoring, whatsapp
-from app.services.compliance import COUNTRY_POLICY, policy_for_country, suppress
+from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
 from app.services.discovery import available_sources
 from app.services.signals import company_signals
 
@@ -50,7 +50,7 @@ def meta(db: Session = Depends(get_db)):
             {"key": "ai_automation", "label": "AI Automation"},
         ],
         "country_policy": {
-            code: {"policy": p, "reason": r} for code, (p, r) in COUNTRY_POLICY.items()
+            code: {"name": COUNTRY_NAMES.get(code, code), "policy": p, "reason": r} for code, (p, r) in COUNTRY_POLICY.items()
         },
         "scheduler_enabled": settings.scheduler_enabled,
         "timezone": settings.scheduler_timezone,

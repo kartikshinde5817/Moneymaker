@@ -50,7 +50,7 @@ CITY_POOL: dict[str, list[str]] = {
 }
 
 # Countries this rotation may target. Only ones where compliance.COUNTRY_POLICY
-# says cold B2B email is lawful - Germany, Austria, Russia, Canada, Denmark,
+# says cold B2B email is lawful - countries not in the table (e.g. Germany, Canada), Denmark,
 # Spain and Italy are absent on purpose. Adding a city here cannot bypass the
 # send gate; that still checks the company's country at dispatch time.
 ROTATION_COUNTRIES = list(CITY_POOL)
