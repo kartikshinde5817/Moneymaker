@@ -84,8 +84,7 @@ function renderFoot() {
     c(META.email_ready, 'Email ready', 'No SMTP') +
     c(META.scheduler_enabled, 'Scheduler on', 'Scheduler off') +
     c(META.telegram_ready, 'Telegram on', 'No Telegram') +
-    c(META.inbox_ready, 'Reply watch on', 'No IMAP') +
-    `<div style="margin-top:8px">Email only to the countries listed in Settings. All others are manual outreach only.</div>`;
+    c(META.inbox_ready, 'Reply watch on', 'No IMAP');
 }
 
 const VIEWS = {};
