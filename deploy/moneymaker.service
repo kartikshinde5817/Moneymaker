@@ -1,0 +1,26 @@
+[Unit]
+Description=Money Maker - lead generation & outreach
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# This file is a template: setup.sh substitutes the real user and path below
+# when it installs it to /etc/systemd/system/. Don't `systemctl start` a copy
+# of this file directly - "ubuntu" and this path are placeholders.
+User=ubuntu
+WorkingDirectory=/home/ubuntu/moneymaker
+ExecStart=/home/ubuntu/moneymaker/venv/bin/python /home/ubuntu/moneymaker/run.py --no-browser
+Restart=on-failure
+RestartSec=5
+# Scheduled campaigns and the reply watcher matter more here than a fast
+# shutdown, so give in-flight work a little room to finish on deploys/reboots.
+TimeoutStopSec=30
+
+# app/config.py reads .env itself (via pydantic-settings), so it is NOT
+# re-declared here as systemd's EnvironmentFile - that format chokes on
+# unquoted '#' and some punctuation, and your SMTP password has an '@' in it.
+# Letting the app parse its own .env avoids a second, less forgiving parser.
+
+[Install]
+WantedBy=multi-user.target
