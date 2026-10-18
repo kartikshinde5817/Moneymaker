@@ -344,6 +344,7 @@ def list_campaigns(db: Session = Depends(get_db)):
             "city_coverage": __import__("app.services.cities", fromlist=["x"]).coverage(
                 c.countries or [], c.city_history),
             "running": c.id in _running,
+            "stopping": pipeline.stop_requested(c.id),
             "next_run": next_runs.get(c.id),
             "last_run": None if not last else {
                 "id": last.id, "status": last.status,
@@ -402,6 +403,23 @@ def _run_campaign_bg(campaign_id: int, trigger: str) -> None:
     finally:
         with _running_lock:
             _running.discard(campaign_id)
+
+
+@router.post("/campaigns/{campaign_id}/stop")
+def stop_campaign(campaign_id: int, db: Session = Depends(get_db)):
+    """Stop a running campaign, or reset one whose run is no longer alive."""
+    if not db.get(Campaign, campaign_id):
+        raise HTTPException(404, "campaign not found")
+    with _running_lock:
+        live = campaign_id in _running
+    if live:
+        pipeline.request_stop(campaign_id)
+        return {"stopping": True, "reset": 0}
+    # Nothing in this process is executing it: the row was left "running" by a
+    # restart or crash. Closing it is the reset.
+    closed = pipeline.close_dead_runs(
+        db, "Reset by you - this run was no longer active.", campaign_id)
+    return {"stopping": False, "reset": closed}
 
 
 @router.post("/campaigns/{campaign_id}/run")
@@ -489,6 +507,7 @@ def workflow_state(db: Session = Depends(get_db)):
             "current_item": run.current_item,
             "stats": run.stats or {},
             "error": run.error,
+            "stopping": run.status == "running" and pipeline.stop_requested(run.campaign_id),
         },
         "nodes": nodes,
         "log": (run.log or [])[-60:],

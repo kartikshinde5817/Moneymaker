@@ -14,6 +14,7 @@ do not write.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import traceback
 
@@ -168,10 +169,64 @@ class RunLogger:
         self.db.flush()
 
 
+class RunCancelled(Exception):
+    """Raised at a safe point after the user asks a running campaign to stop."""
+
+
+# Python threads cannot be killed, so stopping is cooperative: the API records
+# the request and the run checks for it between sources and between prospects.
+_stop_lock = threading.Lock()
+_stop_requested: set[int] = set()
+
+
+def request_stop(campaign_id: int) -> None:
+    with _stop_lock:
+        _stop_requested.add(campaign_id)
+
+
+def stop_requested(campaign_id: int) -> bool:
+    with _stop_lock:
+        return campaign_id in _stop_requested
+
+
+def clear_stop(campaign_id: int) -> None:
+    with _stop_lock:
+        _stop_requested.discard(campaign_id)
+
+
+def _check_stop(campaign: Campaign) -> None:
+    if stop_requested(campaign.id):
+        raise RunCancelled()
+
+
+def close_dead_runs(db: Session, reason: str, campaign_id: int | None = None) -> int:
+    """Close runs marked "running" that nothing is executing any more.
+
+    A restart (or Render putting the service to sleep) kills the run's thread
+    but leaves its row saying "running" - and the dashboard would show that
+    dead run as live forever.
+    """
+    stmt = select(CampaignRun).where(CampaignRun.status == "running")
+    if campaign_id is not None:
+        stmt = stmt.where(CampaignRun.campaign_id == campaign_id)
+    runs = db.execute(stmt).scalars().all()
+    for r in runs:
+        r.status = "cancelled"
+        r.finished_at = r.finished_at or utcnow()
+        r.current_item = None
+        r.log = list(r.log or []) + [f"{utcnow():%H:%M:%S}  {reason}"]
+    db.commit()
+    return len(runs)
+
+
 def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") -> CampaignRun:
+    clear_stop(campaign.id)
     run = CampaignRun(campaign_id=campaign.id, trigger=trigger, status="running")
     db.add(run)
-    db.flush()
+    # Committed straight away: the dashboard reads through its own connection
+    # and cannot see an uncommitted row, and a rollback on the first prospect
+    # would otherwise take the run itself with it.
+    db.commit()
     emit = RunLogger(run, db)
     track = StageTracker(run, db)
 
@@ -191,6 +246,7 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
         emit(f"Discovery finished: {len(prospects)} prospects from {len(campaign.sources or [])} source(s)")
 
         for prospect in prospects:
+            _check_stop(campaign)
             if stats["leads_created"] >= campaign.daily_lead_limit:
                 emit(f"Daily lead limit of {campaign.daily_lead_limit} reached — stopping")
                 break
@@ -216,6 +272,13 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
             f"{stats['queued']} queued, {stats['rejected']} rejected, "
             f"{stats['duplicates']} duplicates skipped."
         )
+    except RunCancelled:
+        run.status = "cancelled"
+        track.finish()
+        emit(
+            f"Stopped by you. {stats['leads_created']} leads and {stats['drafted']} drafts "
+            f"made before stopping are kept."
+        )
     except Exception as exc:  # noqa: BLE001
         run.status = "failed"
         track.fail("trigger", str(exc)[:160])
@@ -226,6 +289,7 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
         emit(f"RUN FAILED: {exc}")
         log.exception("campaign run failed")
     finally:
+        clear_stop(campaign.id)
         run.finished_at = utcnow()
         run.stats = stats
         db.commit()
@@ -254,6 +318,7 @@ def _discover(db: Session, campaign: Campaign, run: CampaignRun, emit, stats, tr
     track.start("discovery", f"{len(source_keys)} sources · {', '.join(locations) or 'default'}")
 
     for key in source_keys:
+        _check_stop(campaign)
         source = get_source(key)
         if source is None:
             emit(f"  unknown source '{key}' — skipped")
@@ -283,6 +348,7 @@ def _discover(db: Session, campaign: Campaign, run: CampaignRun, emit, stats, tr
         stats["found"] += len(result.prospects)
         if result.errors:
             track.fail("discovery", result.errors[0])
+        db.commit()  # so the live view shows progress while the other sources run
     if all(n["status"] != "error" for n in [track.state["discovery"]]):
         track.done("discovery", passed=len(prospects),
                    detail=f"{len(prospects)} prospects from {len(source_keys)} sources")
@@ -410,7 +476,7 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
 
     # --- qualification ----------------------------------------------------
     if not ai.available():
-        track.skip("qualify", "no ANTHROPIC_API_KEY — rules only")
+        track.skip("qualify", "free mode — rule-based checks only")
     if ai.available():
         track.start("qualify", company.name)
         try:

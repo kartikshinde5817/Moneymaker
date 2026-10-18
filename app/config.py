@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     admin_password: str = ""  # blank = no login required (localhost use)
 
     # --- AI ---------------------------------------------------------------
+    # Free by default: the paid Claude API is used only when AI_ENABLED=true is
+    # set on purpose, so a leftover key can never cause charges by itself.
+    ai_enabled: bool = False
     anthropic_api_key: str = ""
     llm_model_fast: str = "claude-haiku-4-5-20251001"
     llm_model_smart: str = "claude-sonnet-5"

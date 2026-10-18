@@ -35,6 +35,10 @@ async def lifespan(app: FastAPI):
     with session_scope() as db:
         result = bootstrap(db)
         seed_mailbox(db)
+        from app.services.pipeline import close_dead_runs
+        closed = close_dead_runs(db, "Interrupted - the app restarted while this run was in progress.")
+    if closed:
+        log.info("closed %d run(s) interrupted by the restart", closed)
     if result["campaigns_created"]:
         log.info("created %d default campaigns", result["campaigns_created"])
     if result["legacy_leads_migrated"]:

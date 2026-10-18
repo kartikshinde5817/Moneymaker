@@ -37,8 +37,8 @@ API_VERSION = "2023-06-01"
 # USD per million tokens, for the running cost figure on the dashboard.
 PRICING = {
     "claude-haiku-4-5-20251001": (1.00, 5.00),
-    "claude-sonnet-5": (3.00, 15.00),
-    "claude-opus-5": (15.00, 75.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-opus-5": (5.00, 25.00),
 }
 
 SERVICE_PITCH = {
@@ -70,7 +70,7 @@ class AIUnavailable(Exception):
 
 
 def available() -> bool:
-    return bool(settings.anthropic_api_key)
+    return bool(settings.ai_enabled and settings.anthropic_api_key)
 
 
 def _cost(model: str, tin: int, tout: int) -> float:

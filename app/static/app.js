@@ -100,7 +100,7 @@ function renderNav(pending) {
 function renderFoot() {
   const c = (ok, on, off) => `<span class="chip ${ok ? 'ok' : 'off'}"><span class="dot"></span>${ok ? on : off}</span>`;
   $('#foot').innerHTML =
-    c(META.ai_ready, 'AI writer on', 'AI writer off') +
+    c(META.ai_ready, 'Claude AI on (paid)', 'Free mode') +
     c(META.email_ready, 'Email ready', 'No SMTP') +
     c(META.scheduler_enabled, 'Scheduler on', 'Scheduler off') +
     c(META.telegram_ready, 'Telegram on', 'No Telegram') +
@@ -136,6 +136,14 @@ const NODE_ICONS = {
   rocket:  'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09zM12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5',
 };
 
+// A soft tint per step. The panel stays dark and the text white; only the
+// icons, packages and step animations pick these up.
+const STAGE_TINT = {
+  trigger: '#FCD34D', discovery: '#67E8F9', resolution: '#7DD3FC', research: '#A5B4FC',
+  signals: '#C4B5FD', qualify: '#F0ABFC', scoring: '#F9A8D4', personalize: '#FDBA74', outbox: '#86EFAC',
+};
+const tint = k => STAGE_TINT[k] || '#E8EEF4';
+
 // Headline numbers from the latest run. They stay on screen after the run ends
 // and only reset when the next agent starts.
 const RUN_STATS = [
@@ -170,6 +178,9 @@ function fmtIn(ms) {
     h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   return 'in ' + (d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`);
 }
+
+const runEnded = run => ({ failed: 'failed', cancelled: 'stopped' }[run.status] || 'finished');
+const runPill = s => ({ completed: 'sent', failed: 'rejected', cancelled: 'cancelled' }[s] || 'queued');
 
 const fmtDur = ms => {
   const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600);
@@ -245,6 +256,7 @@ VIEWS.workflow = async function () {
 
   const runBtn = $('#wfRun');
   if (runBtn) runBtn.onclick = async () => {
+    if (runBtn.dataset.stop) { stopRun(+runBtn.dataset.stop); return; }
     try {
       await post(`/api/campaigns/${$('#wfCamp').value}/run`);
       toast('Agent started', 'good');
@@ -270,8 +282,11 @@ async function paintWorkflow(pre) {
 
   const btn = $('#wfRun');
   if (btn) {
-    btn.disabled = running;
-    btn.innerHTML = running ? '<span class="spin"></span> Running' : '▶ Run agent';
+    const stopping = running && wf.run.stopping;
+    btn.disabled = !!stopping;
+    btn.classList.toggle('stop', running);
+    btn.dataset.stop = running ? wf.run.campaign_id : '';
+    btn.innerHTML = stopping ? '<span class="spin"></span> Stopping…' : running ? '■ Stop agent' : '▶ Run agent';
   }
   tickWorkflow();
   pollWorkflow(wf);
@@ -307,6 +322,8 @@ function paintHero(wf, running) {
     if (stage) stage.textContent = active ? active.label : 'Starting';
     const item = $('#hxItem');
     if (item) item.textContent = run.current_item ? '→ ' + run.current_item : '';
+    const stop = $('#hxStop');
+    if (stop && run.stopping && !stop.disabled) { stop.disabled = true; stop.textContent = 'Stopping…'; }
   }
 }
 
@@ -323,6 +340,8 @@ function heroHtml(wf, running) {
       <div class="hx-live">
         <div class="hx-stage"><span>Current stage</span><b id="hxStage">Starting</b></div>
         <div class="hx-stage"><span>Running for</span><b id="hxElapsed" class="mono">00:00</b></div>
+        <button class="hx-stop" id="hxStop" onclick="stopRun(${run.campaign_id})"${run.stopping ? ' disabled' : ''}>
+          ${run.stopping ? 'Stopping…' : '■ Stop this run'}</button>
       </div>
       <div class="hx-item" id="hxItem"></div>`;
   } else if (next) {
@@ -350,7 +369,7 @@ function heroHtml(wf, running) {
       </button>`).join('') : '<div class="hx-empty">No agents are switched on.</div>';
 
   const cap = running ? '<b>Live numbers</b> — updating as the agent works'
-    : run ? `<b>Last run · ${esc(run.campaign)}</b> — ${run.status === 'failed' ? 'failed' : 'finished'} ${fmtWhen(run.finished_at || run.started_at)}. These stay until the next agent starts.`
+    : run ? `<b>Last run · ${esc(run.campaign)}</b> — ${runEnded(run)} ${fmtWhen(run.finished_at || run.started_at)}. These stay until the next agent starts.`
     : '<b>No runs yet</b> — the numbers fill in when the first agent runs.';
 
   return `
@@ -425,8 +444,8 @@ function paintFlow(wf, running) {
           <div><h3>Pipeline</h3><div class="wf-sub" id="wfSub"></div></div>
         </div>
         <div class="wf-flow">${nodes.map((n, i) => `
-          ${i ? `<div class="conn" data-i="${i}"><span class="line"></span><b class="pkg"></b><b class="pkg"></b></div>` : ''}
-          <div class="node" data-k="${esc(n.key)}" style="--i:${i}">
+          ${i ? `<div class="conn" data-i="${i}" style="--c1:${tint(nodes[i - 1].key)};--c2:${tint(n.key)}"><span class="line"></span><b class="pkg"></b><b class="pkg"></b></div>` : ''}
+          <div class="node" data-k="${esc(n.key)}" style="--i:${i};--c:${tint(n.key)}">
             <div class="nc">
               <svg class="ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" transform="rotate(-90 32 32)"/></svg>
               <span class="fx"><i></i><i></i><i></i></span>
@@ -445,7 +464,8 @@ function paintFlow(wf, running) {
           <span><i style="background:#E8EEF4"></i>Done</span>
           <span><i class="lg-pkg"></i>A prospect moving to the next step</span>
           <span style="color:#E58E8E">✕ Rejected at this step</span>
-          <span><b class="lg-llm">LLM</b>AI step (costs money)</span>
+          ${META.ai_ready ? '<span><b class="lg-llm">AI</b>Claude step, billed by Anthropic per use</span>'
+            : '<span>Free mode: rules and templates, no paid AI</span>'}
         </div>
       </div>`;
   }
@@ -461,7 +481,8 @@ function paintFlow(wf, running) {
     const node = canvas.querySelector(`.node[data-k="${n.key}"]`);
     if (!node) return;
     const keep = !running && node.classList.contains('work') ? ' work' : '';
-    node.className = `node ${n.status}${running && n.key === wf.active ? ' running' : ''}${keep}`;
+    const status = !running && n.status === 'running' ? (n.passed ? 'done' : 'idle') : n.status;
+    node.className = `node ${status}${running && n.key === wf.active ? ' running' : ''}${keep}`;
     node.title = [n.detail || n.note,
       n.ms ? `${n.ms > 1000 ? (n.ms / 1000).toFixed(1) + 's' : n.ms + 'ms'} spent here` : ''].filter(Boolean).join(' · ');
     animateNumber(node.querySelector('.cnt'), n.passed || 0);
@@ -479,6 +500,7 @@ function paintFlow(wf, running) {
   setHtml($('#wfChip'), !run ? '<span class="wf-live idle"><span class="bl"></span>NO RUNS YET</span>'
     : running ? '<span class="wf-live run"><span class="bl"></span>RUNNING</span>'
     : run.status === 'failed' ? '<span class="wf-live fail"><span class="bl"></span>FAILED</span>'
+    : run.status === 'cancelled' ? '<span class="wf-live idle"><span class="bl"></span>STOPPED</span>'
     : '<span class="wf-live done"><span class="bl"></span>COMPLETED</span>');
   setHtml($('#wfSub'), run
     ? `${esc(run.campaign)} · ${esc(run.trigger)} · started ${fmtTime(run.started_at)}${run.stats && run.stats.ai_cost_usd ? ' · $' + run.stats.ai_cost_usd.toFixed(3) + ' AI' : ''}`
@@ -496,7 +518,7 @@ function paintFlow(wf, running) {
     now = `<span class="nx-ico">${svgIcon(NODE_ICONS.rocket, 15)}</span>
       <div style="min-width:0"><div>Next up: <b>${esc(next.name)}</b> · ${fmtWhen(next.at)} ·
         <span class="js-in" data-at="${esc(next.at)}">${fmtIn(new Date(next.at) - Date.now())}</span>${wf.scheduler_enabled ? '' : ' (scheduler off)'}</div>
-      ${run ? `<div class="wf-detail">Last run: ${esc(run.campaign)} ${run.status === 'failed' ? 'failed' : 'finished'} ${fmtTime(run.finished_at || run.started_at)}</div>` : ''}</div>`;
+      ${run ? `<div class="wf-detail">Last run: ${esc(run.campaign)} ${runEnded(run)} ${fmtTime(run.finished_at || run.started_at)}</div>` : ''}</div>`;
   } else {
     now = `<span class="nx-ico">${svgIcon(NODE_ICONS.rocket, 15)}</span>
       <div>No agent is scheduled. Create one with <b>New agent</b>.</div>`;
@@ -637,7 +659,7 @@ VIEWS.dashboard = async function () {
       <div class="card"><h3>Recent campaign runs</h3>
         ${runs.length ? `<div style="margin-top:8px">${runs.slice(0, 8).map(r => `
           <div class="row" style="padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px">
-            <span class="pill ${r.status === 'completed' ? 'sent' : r.status === 'failed' ? 'rejected' : 'queued'}">${r.status}</span>
+            <span class="pill ${runPill(r.status)}">${r.status === 'cancelled' ? 'stopped' : r.status}</span>
             <span>${esc(r.campaign)}</span>
             <span class="sp"></span>
             <span class="muted mono">${(r.stats && r.stats.leads_created) || 0} leads</span>
@@ -1080,8 +1102,9 @@ function campCard(c, i) {
         <span class="sp"></span>
         <button class="btn sm ghost icon" onclick="deleteCampaign(${c.id})" title="Delete this campaign" aria-label="Delete ${esc(c.name)}">${svgIcon(NODE_ICONS.trash)}</button>
         <button class="btn sm" onclick="openCampaign(${c.id})">Edit</button>
-        <button class="btn sm primary" ${c.running ? 'disabled' : ''} onclick="runCampaign(${c.id})">
-          ${c.running ? '<span class="spin"></span> Running' : '▶ Run now'}</button>
+        ${c.running
+          ? `<button class="btn sm danger" ${c.stopping ? 'disabled' : ''} onclick="stopRun(${c.id})">${c.stopping ? '<span class="spin dark"></span> Stopping…' : '■ Stop'}</button>`
+          : `<button class="btn sm primary" onclick="runCampaign(${c.id})">▶ Run now</button>`}
       </div>
     </div>`;
 }
@@ -1351,7 +1374,7 @@ function paintCampaignEditor() {
           <span class="fine">Leads scoring below this are kept but never drafted.</span></div>
         <div class="inp"><label for="ceLeads">Leads per run</label>
           <input type="number" id="ceLeads" min="1" max="500" value="${c.daily_lead_limit}">
-          <span class="fine">The most new leads one run will create.</span></div>
+          <span class="fine">The run stops once it has created this many new leads, which also caps AI cost, since each new lead gets one AI check. It is not the number of emails sent.</span></div>
       </div>`)}
 
     <div class="ce-foot">
@@ -1475,6 +1498,20 @@ async function runCampaign(id) {
   } catch (e) { toast(e.message, 'bad'); }
 }
 
+// Stops a running agent at its next safe point, or closes a run that is still
+// marked running but no longer alive (left behind by a restart).
+async function stopRun(campaignId) {
+  if (!confirm('Stop this agent?\n\nIt finishes the step it is on, then stops. Leads and drafts it already made are kept.')) return;
+  try {
+    const r = await post(`/api/campaigns/${campaignId}/stop`);
+    toast(r.stopping ? 'Stopping — the agent finishes its current step, then stops'
+      : r.reset ? 'Reset — that run was no longer active and has been closed' : 'Nothing was running', 'good');
+    if (VIEW === 'workflow') paintWorkflow();
+    else if (VIEW === 'campaigns') VIEWS.campaigns();
+    if ($('#drawer').classList.contains('on') && $('#runLog')) closeDrawer();
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
 async function dispatchNow() {
   try {
     const r = await post('/api/outbox/dispatch');
@@ -1491,8 +1528,10 @@ async function showRun(runId) {
     d.innerHTML = `
       <div class="row" style="margin-bottom:14px">
         <h2 style="margin:0;font-size:18px">Campaign run #${r.id}</h2>
-        <span class="pill ${r.status === 'completed' ? 'sent' : r.status === 'failed' ? 'rejected' : 'queued'}">${esc(r.status)}</span>
-        <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button></div>
+        <span class="pill ${runPill(r.status)}">${esc(r.status === 'cancelled' ? 'stopped' : r.status)}</span>
+        <span class="sp"></span>
+        ${r.status === 'running' ? `<button class="btn danger" onclick="stopRun(${r.campaign_id})">■ Stop</button>` : ''}
+        <button class="btn ghost" onclick="closeDrawer()">Close</button></div>
       ${r.error ? `<div class="banner bad">${esc(r.error.slice(0, 600))}</div>` : ''}
       <div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(105px,1fr))">
         ${Object.entries(r.stats || {}).map(([k, v]) => `<div class="tile"><div class="k">${esc(k.replace(/_/g, ' '))}</div>
