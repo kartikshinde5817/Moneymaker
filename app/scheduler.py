@@ -89,15 +89,17 @@ def _trigger(c: Campaign) -> CronTrigger:
     )
 
 
-def upcoming(db: Session) -> list[dict]:
+def upcoming(db: Session, campaigns: list[Campaign] | None = None) -> list[dict]:
     """Next start of every enabled campaign, soonest first.
 
     Read from the live job where one exists, so the dashboard shows exactly
     what the scheduler will do. With the scheduler off, the same trigger is
     evaluated directly - the times are still right, they just will not fire.
     """
+    if campaigns is None:
+        campaigns = db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars().all()
     out = []
-    for c in db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars():
+    for c in (c for c in campaigns if c.enabled):
         job = _scheduler.get_job(f"campaign:{c.id}") if _scheduler else None
         at = job.next_run_time if job else None
         if at is None:

@@ -21,7 +21,7 @@ from app.models import (
 from app.services import ai, catalog, inbox, linkedin, mailer, notify, pipeline, scoring, whatsapp
 from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
 from app.services.discovery import available_sources
-from app.services.signals import company_signals
+from app.services.signals import company_signals, signals_by_company
 
 router = APIRouter(prefix="/api")
 
@@ -325,7 +325,8 @@ def delete_service(key: str, db: Session = Depends(get_db)):
 def list_campaigns(db: Session = Depends(get_db)):
     from app.scheduler import upcoming
 
-    next_runs = {u["campaign_id"]: u["at"] for u in upcoming(db)}
+    campaigns = db.execute(select(Campaign).order_by(Campaign.schedule_time)).scalars().all()
+    next_runs = {u["campaign_id"]: u["at"] for u in upcoming(db, campaigns)}
     # Two grouped queries for all campaigns, not two queries per campaign.
     lead_counts = dict(db.execute(
         select(Lead.campaign_id, func.count(Lead.id)).group_by(Lead.campaign_id)
@@ -338,7 +339,7 @@ def list_campaigns(db: Session = Depends(get_db)):
                                  & (CampaignRun.started_at == latest.c.at))
     ).scalars()}
     out = []
-    for c in db.execute(select(Campaign).order_by(Campaign.schedule_time)).scalars():
+    for c in campaigns:
         last = last_runs.get(c.id)
         leads = lead_counts.get(c.id, 0)
         out.append({
@@ -478,14 +479,13 @@ def workflow_state(db: Session = Depends(get_db)):
         "timezone": settings.scheduler_timezone,
     }
 
-    run = db.execute(
-        select(CampaignRun).where(CampaignRun.status == "running")
-        .order_by(CampaignRun.started_at.desc()).limit(1)
-    ).scalar_one_or_none()
-    if run is None:
-        run = db.execute(
-            select(CampaignRun).order_by(CampaignRun.started_at.desc()).limit(1)
-        ).scalar_one_or_none()
+    # A running run wins; otherwise the newest. One query, campaign included.
+    found = db.execute(
+        select(CampaignRun, Campaign).outerjoin(Campaign, Campaign.id == CampaignRun.campaign_id)
+        .order_by((CampaignRun.status == "running").desc(), CampaignRun.started_at.desc())
+        .limit(1)
+    ).first()
+    run, campaign = found if found else (None, None)
 
     idle_nodes = [
         {"key": k, "label": lab, "note": note, "icon": ic, "engine": eng,
@@ -500,7 +500,6 @@ def workflow_state(db: Session = Depends(get_db)):
             **schedule,
         }
 
-    campaign = db.get(Campaign, run.campaign_id)
     state = run.stage_state or {}
     nodes = state.get("nodes") or idle_nodes
     return {
@@ -636,14 +635,22 @@ def list_leads(
 
 @router.get("/leads/{lead_id}")
 def lead_detail(lead_id: int, db: Session = Depends(get_db)):
-    lead = db.get(Lead, lead_id)
-    if not lead:
+    row = db.execute(
+        select(Lead, Company, Contact).join(Company, Company.id == Lead.company_id)
+        .outerjoin(Contact, Contact.id == Lead.contact_id).where(Lead.id == lead_id)
+    ).first()
+    if not row:
         raise HTTPException(404, "lead not found")
-    company = db.get(Company, lead.company_id)
-    contact = db.get(Contact, lead.contact_id) if lead.contact_id else None
+    lead, company, contact = row
 
-    signals = company_signals(db, company.id)
-    sources = {s.id: s for s in db.execute(select(Source)).scalars()} if signals else {}
+    # Evidence and the pages it came from together (this used to load every
+    # source in the database, however many there were).
+    pairs = db.execute(
+        select(Signal, Source).outerjoin(Source, Source.id == Signal.source_id)
+        .where(Signal.company_id == company.id).order_by(Signal.observed_at.desc())
+    ).all()
+    signals = [s for s, _ in pairs]
+    sources = {src.id: src for _, src in pairs if src is not None}
     audit = db.execute(
         select(WebsiteAudit).where(WebsiteAudit.company_id == company.id)
         .order_by(WebsiteAudit.audited_at.desc()).limit(1)
@@ -788,9 +795,10 @@ def outbox(status: str = "pending_approval", db: Session = Depends(get_db)):
         .order_by(Lead.score.desc(), EmailMessage.created_at.asc())
         .limit(200)
     ).all()
+    evidence = signals_by_company(db, (company.id for _, _, company in rows))
     out = []
     for m, lead, company in rows:
-        signals = company_signals(db, company.id)
+        signals = evidence.get(company.id, [])
         cited = set(m.cited_signal_ids or [])
         out.append({
             "id": m.id, "lead_id": lead.id, "company": company.name,

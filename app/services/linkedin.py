@@ -102,13 +102,13 @@ def queue(db: Session, *, only_unemailable: bool = False, limit: int = 100) -> l
             (Lead.contact_id.is_(None)) | (Company.email_policy != ALLOWED)
         )
     rows = db.execute(stmt.order_by(Lead.score.desc()).limit(limit)).all()
+    # Evidence for every row in one query, not one per lead.
+    from app.services.signals import signals_by_company
+    evidence = signals_by_company(db, (company.id for _, company in rows))
 
     out = []
     for lead, company in rows:
-        signals = db.execute(
-            select(Signal).where(Signal.company_id == company.id)
-            .order_by(Signal.observed_at.desc())
-        ).scalars().all()
+        signals = evidence.get(company.id, [])
         if not signals:
             continue  # same rule as email: no evidence, no outreach
         hint, quote = angle_for(signals)
@@ -141,17 +141,18 @@ def queue(db: Session, *, only_unemailable: bool = False, limit: int = 100) -> l
 
 
 def stats(db: Session) -> dict:
-    total = db.execute(
+    total = (
         select(func.count(Company.id)).where(Company.linkedin_url.isnot(None))
-    ).scalar_one()
-    blocked = db.execute(
+    ).scalar_subquery()
+    blocked = (
         select(func.count(Lead.id))
         .join(Company, Company.id == Lead.company_id)
         .where(Company.email_policy != ALLOWED, Lead.stage.notin_(("rejected", "closed")))
-    ).scalar_one()
-    no_email = db.execute(
+    ).scalar_subquery()
+    no_email = (
         select(func.count(Lead.id))
         .where(Lead.contact_id.is_(None), Lead.stage.notin_(("rejected", "closed")))
-    ).scalar_one()
+    ).scalar_subquery()
+    total, blocked, no_email = db.execute(select(total, blocked, no_email)).one()
     return {"with_linkedin_url": total, "email_blocked_country": blocked,
             "no_email_address": no_email}

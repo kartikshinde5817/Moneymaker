@@ -321,31 +321,47 @@ Cite the signal_id values you used in cited_signal_ids."""
 # ---------------------------------------------------------------------------
 
 OPENERS = {
-    "no_website": "I came across {name} and couldn't find a website for you.",
-    "parked_domain": "I came across {name} and noticed {domain} is registered but not yet built out.",
-    "placeholder_site": "I came across {name} and noticed your site is still a placeholder page.",
-    "not_mobile_friendly": "I came across {name} and had a look at your website on a phone - it doesn't currently adapt to smaller screens.",
-    "no_ssl": "I came across {name} and noticed your website is served over plain HTTP, so visitors see a \"Not secure\" warning.",
-    "outdated_tech": "I came across {name} and noticed your website is running on some fairly dated front-end code.",
-    "stale_content": "I came across {name} and noticed the site footer still shows an older year.",
-    "missing_booking": "I came across {name} and noticed there's no way to book or order online from your site.",
-    "missing_ecommerce": "I came across {name} and noticed there's no online store on your site.",
-    "tender_match": "I saw your published tender and thought it might be worth getting in touch.",
-    "hiring_for_skill": "I saw you're currently hiring in this area.",
-    "recently_incorporated": "Congratulations on getting {name} off the ground.",
+    "no_website": "I was looking for {name} online and couldn't find a website for the business.",
+    "parked_domain": "I noticed {domain} is registered to {name} but still shows a holding page.",
+    "placeholder_site": "I had a look at {name}'s website and it's still a placeholder page.",
+    "not_mobile_friendly": "I had a look at {name}'s website on my phone, and it doesn't adjust to the smaller screen.",
+    "no_ssl": "I visited {name}'s website and my browser flagged it as \"Not secure\", because it isn't served over HTTPS.",
+    "outdated_tech": "I had a look at {name}'s website and noticed it's built on some fairly dated code.",
+    "stale_content": "I had a look at {name}'s website and noticed the footer still shows an older year.",
+    "missing_booking": "I had a look at {name}'s website and couldn't find a way to book or order online.",
+    "missing_ecommerce": "I had a look at {name}'s website and noticed there's no online shop.",
+    "tender_match": "I saw {name}'s published tender and wanted to get in touch.",
+    "hiring_for_skill": "I saw that {name} is currently hiring in this area.",
+    "recently_incorporated": "Congratulations on setting up {name}.",
+}
+
+# One plain sentence on why the finding matters - general, never a claim about them.
+WHY_IT_MATTERS = {
+    "no_website": "These days most customers check a business online before they get in touch.",
+    "parked_domain": "Visitors who type in your address currently find nothing about you.",
+    "placeholder_site": "Visitors who find you online currently can't see what you offer.",
+    "not_mobile_friendly": "Most people now browse on their phones, so this can quietly cost enquiries.",
+    "no_ssl": "That warning puts some visitors off before they read anything.",
+    "outdated_tech": "Older code tends to load slowly and is harder to keep secure.",
+    "stale_content": "Small details like this can make a business look less active than it is.",
+    "missing_booking": "Customers who want to book outside opening hours currently have to call.",
+    "missing_ecommerce": "An online shop lets customers buy from you at any time.",
+    "tender_match": "",
+    "hiring_for_skill": "If it helps, we can take on the project while you find the right person.",
+    "recently_incorporated": "A clear website is usually one of the first things a new business needs.",
 }
 
 CLOSERS = {
-    "web_development": "We build websites for businesses like yours - fast, mobile-first, and straightforward to update.",
-    "computer_vision": "We build computer-vision systems - PPE and safety monitoring, fire and smoke detection, and quality inspection - that run on existing CCTV.",
-    "ai_agent": "We build AI agents - chat, voice and WhatsApp - that handle routine customer conversations.",
-    "ai_automation": "We build AI automation for the repetitive parts of business operations.",
+    "web_development": "At {company} we build fast, mobile-friendly websites that are easy to update.",
+    "computer_vision": "At {company} we build computer-vision systems - PPE and safety monitoring, fire and smoke detection, and quality inspection - that work with existing CCTV.",
+    "ai_agent": "At {company} we build AI agents for chat, voice and WhatsApp that handle routine customer conversations.",
+    "ai_automation": "At {company} we build AI automation that takes repetitive work off your team.",
 }
 
 
-def _custom_closer(service_category: str) -> str:
+def _custom_closer(service_category: str, company: str) -> str:
     pitch = catalog.pitch_for(service_category)
-    return f"We provide {pitch[0].lower() + pitch[1:].rstrip('.')}." if pitch else ""
+    return f"At {company} we provide {pitch[0].lower() + pitch[1:].rstrip('.')}." if pitch else ""
 
 
 def template_draft(
@@ -355,37 +371,38 @@ def template_draft(
     """Facts only, drawn from signals already on file. Cannot fabricate."""
     greeting = contact.full_name.split()[0] if (contact and contact.full_name) else "there"
     domain = company.primary_domain or company.website or "your domain"
+    ours = sender.get("company_name") or "our studio"
+    website = (sender.get("company_website") or "").strip()
 
-    chosen = None
-    for sig in signals:
-        if sig.signal_type in OPENERS:
-            chosen = sig
-            break
+    chosen = next((s for s in signals if s.signal_type in OPENERS), None)
     opener = (
         OPENERS[chosen.signal_type].format(name=company.name, domain=domain)
-        if chosen
-        else f"I came across {company.name} and wanted to get in touch."
+        if chosen else f"I came across {company.name} and wanted to get in touch."
     )
-    cited = [chosen.id] if chosen else []
+    why = WHY_IT_MATTERS.get(chosen.signal_type, "") if chosen else ""
+    pitch = (CLOSERS.get(service_category, "").format(company=ours)
+             or _custom_closer(service_category, ours))
 
-    body = (
-        f"Hi {greeting},\n\n"
-        f"{opener}\n\n"
-        f"{CLOSERS.get(service_category) or _custom_closer(service_category)} "
-        f"If that's something you're thinking about this year, I'd be glad to show "
-        f"you a couple of examples of similar work.\n\n"
-        f"Would you be open to a short call?"
-    )
+    paragraphs = [
+        f"Hi {greeting},",
+        f"{opener} {why}".strip(),
+        pitch + (f" You can see our work at {website}" if website else ""),
+        "Would a quick 15-minute call next week be useful? If it's not a priority "
+        "right now, just reply and let me know - I won't follow up.",
+    ]
     subject_map = {
-        "web_development": f"A quick note about {company.name}'s website",
-        "computer_vision": f"AI safety monitoring for {company.name}",
-        "ai_agent": f"AI support agents for {company.name}",
-        "ai_automation": f"Automating routine work at {company.name}",
+        "web_development": f"Quick idea for {company.name}'s website",
+        "computer_vision": f"Camera-based safety monitoring for {company.name}",
+        "ai_agent": f"An AI assistant for {company.name}'s customers",
+        "ai_automation": f"Saving time on routine work at {company.name}",
     }
+    if service_category == "web_development" and chosen and chosen.signal_type in (
+            "no_website", "parked_domain", "placeholder_site", "recently_incorporated"):
+        subject_map["web_development"] = f"A website for {company.name}"
     return {
-        "subject": subject_map.get(service_category, f"Working with {company.name}"),
-        "body": body,
-        "cited_signal_ids": cited,
+        "subject": subject_map.get(service_category, f"A quick idea for {company.name}"),
+        "body": "\n\n".join(p for p in paragraphs if p),
+        "cited_signal_ids": [chosen.id] if chosen else [],
         "_usage": {"model": "template", "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0},
         "_fallback": True,
     }

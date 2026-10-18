@@ -47,7 +47,47 @@ function toast(msg, kind) {
   t._h = setTimeout(() => t.className = 'toast', 3800);
 }
 
+// Instant feedback. The database is a network hop away, so a click can take a
+// moment to come back: the clicked button shows it is working straight away,
+// and a thin bar runs along the top while anything is loading. Background
+// polls pass {quiet: true} and show nothing.
+let _inflight = 0, _lastClick = null, _busyClear = null;
+const _busyBtns = new Set();
+document.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) _lastClick = { b, t: performance.now() };
+}, true);
+
+function busyStart() {
+  _inflight++;
+  clearTimeout(_busyClear);
+  document.body.classList.add('busy');
+  if (_lastClick && performance.now() - _lastClick.t < 400 && document.contains(_lastClick.b)) {
+    _lastClick.b.classList.add('is-busy');
+    _busyBtns.add(_lastClick.b);
+    _lastClick = null;
+  }
+}
+
+function busyEnd() {
+  if (--_inflight > 0) return;
+  _inflight = 0;
+  // A short grace period, so a click that makes several requests in a row
+  // stays busy for the whole sequence instead of flickering between them.
+  _busyClear = setTimeout(() => {
+    if (_inflight) return;
+    document.body.classList.remove('busy');
+    _busyBtns.forEach(b => b.classList.remove('is-busy'));
+    _busyBtns.clear();
+  }, 150);
+}
+
 async function api(path, opts = {}) {
+  if (!opts.quiet) busyStart();
+  try { return await _api(path, opts); } finally { if (!opts.quiet) busyEnd(); }
+}
+
+async function _api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) {
     let m = `Error ${r.status}`;
@@ -109,11 +149,17 @@ function renderFoot() {
 
 const VIEWS = {};
 async function go(v) {
+  const view = $('#view'), changed = VIEW !== v || !view.childElementCount;
   VIEW = v;
   if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
   renderNav();
-  $('#view').innerHTML = '<div class="empty">Loading…</div>';
-  try { await VIEWS[v](); } catch (e) { $('#view').innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+  // Keep the current page on screen (faded) until the next one is ready,
+  // rather than blanking it to a "Loading…" message.
+  if (!view.childElementCount) view.innerHTML = '<div class="empty">Loading…</div>';
+  view.classList.add('loading');
+  try { await VIEWS[v](); } catch (e) { view.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+  view.classList.remove('loading');
+  if (changed) $('.main').scrollTop = 0;
   renderNav(window._pending);
 }
 
@@ -271,7 +317,7 @@ async function paintWorkflow(pre) {
   if (!$('#wfCanvas')) return;
   let wf = pre;
   if (!wf) {
-    try { wf = await api('/api/workflow'); } catch (e) { pollWorkflow(_wf); return; }
+    try { wf = await api('/api/workflow', { quiet: true }); } catch (e) { pollWorkflow(_wf); return; }
     if (!$('#wfCanvas')) return;  // left the page while the request was in flight
   }
   _wf = wf;
@@ -1034,8 +1080,10 @@ const SERVICE_ICON = {
 };
 const svcIcon = k => SERVICE_ICON[k] || NODE_ICONS.rocket;
 
+let _campCache = [];
+
 VIEWS.campaigns = async function () {
-  const list = await api('/api/campaigns');
+  const list = _campCache = await api('/api/campaigns');
 
   $('#view').innerHTML = `
     <div class="head"><div><h2>Campaigns</h2>
@@ -1110,8 +1158,7 @@ function campCard(c, i) {
 }
 
 async function updateCampaign(id, changes) {
-  const list = await api('/api/campaigns');
-  const c = list.find(x => x.id === id);
+  const c = _campCache.find(x => x.id === id) || (await api('/api/campaigns')).find(x => x.id === id);
   if (!c) return;
   const body = {
     name: c.name, service_category: c.service_category, sources: c.sources,
@@ -1524,7 +1571,7 @@ async function showRun(runId) {
   d.classList.add('on'); $('#drawerBg').classList.add('on');
   const paint = async () => {
     let r;
-    try { r = await api('/api/runs/' + runId); } catch (e) { return; }
+    try { r = await api('/api/runs/' + runId, { quiet: true }); } catch (e) { return; }
     d.innerHTML = `
       <div class="row" style="margin-bottom:14px">
         <h2 style="margin:0;font-size:18px">Campaign run #${r.id}</h2>

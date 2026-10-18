@@ -198,5 +198,19 @@ def company_signals(db: Session, company_id: int) -> list[Signal]:
     )
 
 
+def signals_by_company(db: Session, company_ids) -> dict[int, list[Signal]]:
+    """company_signals for many companies in one query, for list pages."""
+    ids = list({i for i in company_ids if i is not None})
+    out: dict[int, list[Signal]] = {i: [] for i in ids}
+    if not ids:
+        return out
+    rows = db.execute(
+        select(Signal).where(Signal.company_id.in_(ids)).order_by(Signal.observed_at.desc())
+    ).scalars()
+    for s in rows:
+        out[s.company_id].append(s)
+    return out
+
+
 def has_explicit_request(signals: list[Signal]) -> bool:
     return any(s.evidence_class == EXPLICIT for s in signals)

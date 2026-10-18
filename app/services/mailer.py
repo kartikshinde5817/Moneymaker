@@ -221,7 +221,10 @@ def compose(message: EmailMessage, sender: dict) -> MIMEMultipart:
     from app.services.ai import render_signature
 
     token = message.unsubscribe_token or new_unsubscribe_token()
-    body = message.body.rstrip() + render_signature(sender) + "\n" + build_footer(token, sender)
+    sig_sender = dict(sender)
+    if sig_sender.get("company_website") and sig_sender["company_website"] in message.body:
+        sig_sender["company_website"] = ""
+    body = message.body.rstrip() + render_signature(sig_sender) + "\n" + build_footer(token, sender)
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = message.subject

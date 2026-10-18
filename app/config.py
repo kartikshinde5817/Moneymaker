@@ -81,7 +81,7 @@ class Settings(BaseSettings):
 
     # --- sender identity (CAN-SPAM requires a real postal address) --------
     company_name: str = ""
-    company_website: str = ""
+    company_website: str = "https://www.atkind.com/"
     company_postal_address: str = ""
     sender_name: str = ""
     sender_email: str = ""
