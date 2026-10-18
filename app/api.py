@@ -16,9 +16,9 @@ from app.db import get_db, session_scope
 from app.models import (
     AIAnalysis, Campaign, CampaignRun, Company, Contact, EmailEvent,
     EmailMessage, Lead, Mailbox, SearchQuery, Signal, Source, Suppression,
-    WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
+    Service, WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
 )
-from app.services import ai, inbox, linkedin, mailer, notify, pipeline, scoring, whatsapp
+from app.services import ai, catalog, inbox, linkedin, mailer, notify, pipeline, scoring, whatsapp
 from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
 from app.services.discovery import available_sources
 from app.services.signals import company_signals
@@ -35,14 +35,6 @@ _running_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 
-SERVICES = {
-    "web_development": "Web Development",
-    "computer_vision": "Computer Vision / OpenCV",
-    "ai_agent": "AI Agents",
-    "ai_automation": "AI Automation",
-}
-
-
 @router.get("/meta")
 def meta(db: Session = Depends(get_db)):
     return {
@@ -51,7 +43,8 @@ def meta(db: Session = Depends(get_db)):
         "email_ready": mailer.provider_ready(),
         "sender_configured": bool(settings.sender_email and settings.company_postal_address),
         "sources": available_sources(),
-        "services": [{"key": k, "label": v} for k, v in SERVICES.items()],
+        "services": [{"key": x["key"], "label": x["label"], "builtin": x["builtin"]}
+                     for x in catalog.all_services()],
         "country_policy": {
             code: {"name": COUNTRY_NAMES.get(code, code), "policy": p, "reason": r} for code, (p, r) in COUNTRY_POLICY.items()
         },
@@ -179,7 +172,7 @@ class CampaignIn(BaseModel):
     @field_validator("service_category")
     @classmethod
     def _service(cls, v: str) -> str:
-        if v not in SERVICES:
+        if not catalog.exists(v):
             raise ValueError(f"unknown service '{v}'")
         return v
 
@@ -218,6 +211,110 @@ class CampaignIn(BaseModel):
     @classmethod
     def _clean_list(cls, v: list[str]) -> list[str]:
         return list(dict.fromkeys(s.strip() for s in v if s.strip()))
+
+
+class ServiceIn(BaseModel):
+    label: str = Field(min_length=2, max_length=80)
+    pitch: str = Field(min_length=10, max_length=600)
+    keywords: list[str] = []
+    intent_phrases: list[str] = []
+    industries: list[str] = []
+
+    @field_validator("label", "pitch")
+    @classmethod
+    def _text(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if len(v) < 2:
+            raise ValueError("this field is required")
+        return v
+
+    @field_validator("keywords", "intent_phrases", "industries")
+    @classmethod
+    def _terms(cls, v: list[str]) -> list[str]:
+        seen: dict[str, str] = {}
+        for item in v:
+            item = " ".join(item.split())
+            if item:
+                seen.setdefault(item.lower(), item)
+        if len(seen) > 30:
+            raise ValueError("at most 30 entries")
+        return list(seen.values())
+
+    @field_validator("keywords")
+    @classmethod
+    def _need_keywords(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("add at least one keyword - it is what the agent searches for")
+        return v
+
+
+def _service_json(db: Session, svc: dict) -> dict:
+    used = db.execute(
+        select(func.count(Campaign.id)).where(Campaign.service_category == svc["key"])
+    ).scalar_one()
+    return {**svc, "campaigns": used}
+
+
+@router.get("/services")
+def list_services(db: Session = Depends(get_db)):
+    from app.services.discovery.base import KEYWORD_GROUPS
+    out = []
+    for svc in catalog.all_services():
+        if svc["builtin"]:
+            svc = {**svc, "keywords": KEYWORD_GROUPS.get(svc["key"], []),
+                   "pitch": ai.SERVICE_PITCH.get(svc["key"], ""),
+                   "intent_phrases": [], "industries": []}
+        out.append(_service_json(db, svc))
+    return out
+
+
+@router.post("/services")
+def create_service(payload: ServiceIn, db: Session = Depends(get_db)):
+    taken = set(db.execute(select(Service.key)).scalars())
+    key = catalog.slugify(payload.label, taken)
+    if any(x["label"].lower() == payload.label.lower() for x in catalog.all_services()):
+        raise HTTPException(409, f"a service called '{payload.label}' already exists")
+    db.add(Service(key=key, **payload.model_dump()))
+    db.commit()
+    catalog.invalidate()
+    return {"key": key}
+
+
+@router.put("/services/{key}")
+def update_service(key: str, payload: ServiceIn, db: Session = Depends(get_db)):
+    if key in catalog.BUILTIN:
+        raise HTTPException(400, "built-in services cannot be edited")
+    svc = db.execute(select(Service).where(Service.key == key)).scalar_one_or_none()
+    if not svc:
+        raise HTTPException(404, "service not found")
+    clash = [x for x in catalog.all_services()
+             if x["key"] != key and x["label"].lower() == payload.label.lower()]
+    if clash:
+        raise HTTPException(409, f"a service called '{payload.label}' already exists")
+    for k, v in payload.model_dump().items():
+        setattr(svc, k, v)
+    db.commit()
+    catalog.invalidate()
+    return {"ok": True}
+
+
+@router.delete("/services/{key}")
+def delete_service(key: str, db: Session = Depends(get_db)):
+    if key in catalog.BUILTIN:
+        raise HTTPException(400, "built-in services cannot be deleted")
+    svc = db.execute(select(Service).where(Service.key == key)).scalar_one_or_none()
+    if not svc:
+        raise HTTPException(404, "service not found")
+    names = db.execute(
+        select(Campaign.name).where(Campaign.service_category == key)
+    ).scalars().all()
+    if names:
+        raise HTTPException(
+            409, "still used by: " + ", ".join(names) + " - change or delete those campaigns first")
+    db.delete(svc)
+    db.commit()
+    catalog.invalidate()
+    return {"ok": True}
 
 
 @router.get("/campaigns")

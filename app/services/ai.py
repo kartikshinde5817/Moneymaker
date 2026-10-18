@@ -24,6 +24,7 @@ import logging
 import httpx
 
 from app.config import settings
+from app.services import catalog
 from app.models import Company, Contact, Signal
 from app.services.compliance import find_unsupported_claims
 from app.services.discovery.base import EXPLICIT
@@ -164,6 +165,18 @@ Rules you must follow:
 - cited_signal_ids must list the signal_id values you actually relied on."""
 
 
+def _qualify_tool() -> dict:
+    """QUALIFY_TOOL with the user's own services added to the allowed answers."""
+    keys = [s["key"] for s in catalog.all_services()] + ["none"]
+    tool = dict(QUALIFY_TOOL)
+    schema = dict(tool["input_schema"])
+    props = dict(schema["properties"])
+    props["service_category"] = {"type": "string", "enum": keys}
+    schema["properties"] = props
+    tool["input_schema"] = schema
+    return tool
+
+
 def qualify(company: Company, signals: list[Signal], service_category: str) -> dict:
     user = f"""Company: {company.name}
 Country: {company.country}   City: {company.city or 'unknown'}
@@ -174,7 +187,7 @@ Service we are considering pitching: {service_category}
 Evidence on file:
 {_signal_block(signals)}"""
 
-    out, tin, tout = _call(settings.llm_model_fast, QUALIFY_SYSTEM, user, QUALIFY_TOOL, 900)
+    out, tin, tout = _call(settings.llm_model_fast, QUALIFY_SYSTEM, user, _qualify_tool(), 900)
     valid_ids = {s.id for s in signals}
     out["cited_signal_ids"] = [i for i in out.get("cited_signal_ids", []) if i in valid_ids]
     out["_usage"] = {
@@ -249,7 +262,7 @@ def personalize(
     user = f"""Write an outreach email.
 
 FROM: {sender.get('sender_name')} at {sender.get('company_name')}
-WE PROVIDE: {SERVICE_PITCH.get(service_category, service_category)}
+WE PROVIDE: {SERVICE_PITCH.get(service_category) or catalog.pitch_for(service_category) or service_category}
 
 TO: {company.name}
 Greet them as: {greeting}
@@ -330,6 +343,11 @@ CLOSERS = {
 }
 
 
+def _custom_closer(service_category: str) -> str:
+    pitch = catalog.pitch_for(service_category)
+    return f"We provide {pitch[0].lower() + pitch[1:].rstrip('.')}." if pitch else ""
+
+
 def template_draft(
     company: Company, signals: list[Signal], contact: Contact | None,
     service_category: str, sender: dict,
@@ -353,7 +371,7 @@ def template_draft(
     body = (
         f"Hi {greeting},\n\n"
         f"{opener}\n\n"
-        f"{CLOSERS.get(service_category, '')} "
+        f"{CLOSERS.get(service_category) or _custom_closer(service_category)} "
         f"If that's something you're thinking about this year, I'd be glad to show "
         f"you a couple of examples of similar work.\n\n"
         f"Would you be open to a short call?"

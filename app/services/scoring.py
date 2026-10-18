@@ -14,6 +14,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from app.models import Company, Contact, Signal, as_aware, utcnow
+from app.services import catalog
 from app.services.compliance import ALLOWED, is_role_address
 
 SCORE_VERSION = 1
@@ -160,7 +161,9 @@ def score_lead(
     if any(w in blob for w in COMPETITOR_WORDS):
         hits.append(_hit("competitor", f"name or industry matches an agency pattern"))
 
-    for hint in TARGET_INDUSTRY_HINTS.get(service_category, ()):
+    hints = TARGET_INDUSTRY_HINTS.get(service_category) or tuple(
+        h.lower() for h in catalog.industries_for(service_category))
+    for hint in hints:
         if hint in (company.industry or "").lower() or hint in (company.name or "").lower():
             hits.append(_hit("industry_match", f"matched '{hint}'"))
             break

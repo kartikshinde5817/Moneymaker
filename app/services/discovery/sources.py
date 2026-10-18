@@ -21,6 +21,7 @@ import time
 import httpx
 
 from app.config import settings
+from app.services import catalog
 from app.services.discovery.base import (
     EXPLICIT,
     INFERRED,
@@ -475,7 +476,8 @@ class OpenStreetMapSource:
         locations: list[str], limit: int,
     ) -> SourceResult:
         out = SourceResult()
-        terms = keywords or OSM_TERMS.get(service_category, ["business"])
+        terms = (keywords or OSM_TERMS.get(service_category)
+                 or catalog.industries_for(service_category) or ["business"])
         places = locations or ["London"]
         country = (countries or ["GB"])[0].upper()
         seen: set[str] = set()

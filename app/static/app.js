@@ -25,9 +25,18 @@ const SOURCE_LABEL = {
   sam_gov: 'SAM.gov', adzuna: 'Adzuna', openstreetmap: 'OpenStreetMap',
   linkedin_search: 'LinkedIn (via search)',
 };
-const SERVICE_HUE = {
-  web_development: '#22D3EE', computer_vision: '#A78BFA', ai_agent: '#F472B6', ai_automation: '#FBBF24',
-};
+const BUILTIN_SERVICE = { ...SERVICE_LABEL };
+
+// Services the user added live in the database. Fold them into the same lookup
+// tables the built-in four use, so every screen shows their real names.
+function syncServices() {
+  Object.keys(SERVICE_LABEL).forEach(k => { if (!(k in BUILTIN_SERVICE)) delete SERVICE_LABEL[k]; });
+  (META.services || []).forEach(s => { if (!s.builtin) SERVICE_LABEL[s.key] = s.label; });
+}
+async function refreshServices() {
+  META.services = (await api('/api/meta')).services;
+  syncServices();
+}
 const DAYS_LABEL = { 'mon-fri': 'Mon–Fri', daily: 'Every day', weekends: 'Weekends' };
 
 function toast(msg, kind) {
@@ -127,19 +136,13 @@ const NODE_ICONS = {
   rocket:  'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09zM12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5',
 };
 
-// One hue per stage, in flow order, so work visibly travels across the spectrum.
-const STAGE_HUE = {
-  trigger: '#FBBF24', discovery: '#22D3EE', resolution: '#38BDF8', research: '#818CF8',
-  signals: '#A78BFA', qualify: '#E879F9', scoring: '#F472B6', personalize: '#FB923C', outbox: '#4ADE80',
-};
-
 // Headline numbers from the latest run. They stay on screen after the run ends
 // and only reset when the next agent starts.
 const RUN_STATS = [
-  ['found', 'Found', 'search', '#22D3EE'], ['new_companies', 'New companies', 'merge', '#38BDF8'],
-  ['audited', 'Sites audited', 'globe', '#818CF8'], ['signals', 'Evidence', 'doc', '#A78BFA'],
-  ['qualified', 'Qualified', 'brain', '#E879F9'], ['leads_created', 'Leads', 'gauge', '#F472B6'],
-  ['drafted', 'Drafted', 'pen', '#FB923C'], ['rejected', 'Rejected', 'x', '#F87171'],
+  ['found', 'Found', 'search'], ['new_companies', 'New companies', 'merge'],
+  ['audited', 'Sites audited', 'globe'], ['signals', 'Evidence', 'doc'],
+  ['qualified', 'Qualified', 'brain'], ['leads_created', 'Leads', 'gauge'],
+  ['drafted', 'Drafted', 'pen'], ['rejected', 'Rejected', 'x'],
 ];
 
 const svgIcon = (d, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
@@ -202,6 +205,7 @@ let _wfTimer = null, _wfTick = null, _wf = null, _heroKey = '', _flowKey = '';
 VIEWS.workflow = async function () {
   clearTimeout(_wfTimer);
   clearInterval(_wfTick);
+  stopDemo();
   _heroKey = _flowKey = '';
   const [wf, camps] = await Promise.all([api('/api/workflow'), api('/api/campaigns')]);
 
@@ -338,7 +342,7 @@ function heroHtml(wf, running) {
   }
 
   const queue = up.length ? up.slice(0, 6).map((u, i) => `
-      <button class="hx-q${i === 0 && !running ? ' first' : ''}" style="--h:${SERVICE_HUE[u.service] || '#22D3EE'}"
+      <button class="hx-q${i === 0 && !running ? ' first' : ''}"
               onclick="openCampaign(${u.campaign_id})" title="Edit ${esc(u.name)}">
         <span class="qd"></span>
         <span class="qn">${esc(u.name)}<small>${svc(u.service)}</small></span>
@@ -351,16 +355,14 @@ function heroHtml(wf, running) {
 
   return `
     <section class="hx${running ? ' live' : ''}">
-      <span class="hx-ring"></span><span class="blob b1"></span><span class="blob b2"></span>
-      <span class="blob b3"></span><span class="hx-grid"></span>
       <div class="hx-top">
         <div class="hx-main">${main}</div>
         <div class="hx-queue"><div class="hx-qh">Agent queue<span>${up.length} scheduled</span></div>${queue}</div>
       </div>
       <div class="hx-stats">
         <div class="hx-cap">${cap}</div>
-        <div class="hx-tiles">${RUN_STATS.map(([k, label, icon, hue], i) => `
-          <div class="hx-t" style="--h:${hue};--i:${i}">
+        <div class="hx-tiles">${RUN_STATS.map(([k, label, icon], i) => `
+          <div class="hx-t" style="--i:${i}">
             <span class="ti">${svgIcon(NODE_ICONS[icon])}</span>
             <b class="tv zero" data-k="${k}">0</b><span class="tk">${label}</span>
           </div>`).join('')}</div>
@@ -423,12 +425,14 @@ function paintFlow(wf, running) {
           <div><h3>Pipeline</h3><div class="wf-sub" id="wfSub"></div></div>
         </div>
         <div class="wf-flow">${nodes.map((n, i) => `
-          ${i ? `<div class="edge" data-i="${i}"><i></i><i></i><i></i></div>` : ''}
-          <div class="node" data-k="${esc(n.key)}" style="--h:${STAGE_HUE[n.key] || '#22D3EE'};--i:${i}">
-            <div class="ntop">
-              <span class="nico">${svgIcon(NODE_ICONS[n.icon] || NODE_ICONS.doc)}<span class="okb">✓</span></span>
-              ${n.engine === 'llm' ? '<span class="eng llm">LLM</span>'
-                : ['rules', 'http', 'api'].includes(n.engine) ? `<span class="eng">${n.engine.toUpperCase()}</span>` : ''}
+          ${i ? `<div class="conn" data-i="${i}"><span class="line"></span><b class="pkg"></b><b class="pkg"></b></div>` : ''}
+          <div class="node" data-k="${esc(n.key)}" style="--i:${i}">
+            <div class="nc">
+              <svg class="ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" transform="rotate(-90 32 32)"/></svg>
+              <span class="fx"><i></i><i></i><i></i></span>
+              ${svgIcon(NODE_ICONS[n.icon] || NODE_ICONS.doc, 20)}
+              <span class="okb">✓</span>
+              ${n.engine === 'llm' ? '<span class="eng">LLM</span>' : ''}
             </div>
             <div class="nname">${esc(n.label)}</div>
             <div class="nnote">${esc(n.note)}</div>
@@ -437,30 +441,40 @@ function paintFlow(wf, running) {
         <div class="wf-now" id="wfNow"></div>
         <div class="wf-term" id="wfTerm" hidden></div>
         <div class="legend">
-          <span><i style="background:#22D3EE"></i>Running</span>
-          <span><i style="background:#4ADE80"></i>Completed</span>
-          <span><i style="background:#F87171"></i>✕ Rejected here</span>
-          <span><i style="background:#FBBF24"></i>LLM stage (costs money)</span>
-          <span><i style="background:#4D6075"></i>Not reached / skipped</span>
+          <span><i style="background:var(--acc)"></i>Working now</span>
+          <span><i style="background:#E8EEF4"></i>Done</span>
+          <span><i class="lg-pkg"></i>A prospect moving to the next step</span>
+          <span style="color:#E58E8E">✕ Rejected at this step</span>
+          <span><b class="lg-llm">LLM</b>AI step (costs money)</span>
         </div>
       </div>`;
   }
 
   const activeIdx = nodes.findIndex(n => n.key === wf.active);
+  // The last step the latest run reached. The idle animation stops there, so
+  // it never shows packages arriving somewhere the run did not get to.
+  let reach = -1;
+  nodes.forEach((n, i) => { if (n.status === 'done' || n.status === 'error' || n.passed > 0) reach = i; });
+  canvas.dataset.reach = run ? reach : nodes.length - 1;
+
   nodes.forEach((n, i) => {
     const node = canvas.querySelector(`.node[data-k="${n.key}"]`);
     if (!node) return;
-    node.className = `node ${n.status}${running && n.key === wf.active ? ' running' : ''}`;
-    node.title = n.detail || n.note || '';
+    const keep = !running && node.classList.contains('work') ? ' work' : '';
+    node.className = `node ${n.status}${running && n.key === wf.active ? ' running' : ''}${keep}`;
+    node.title = [n.detail || n.note,
+      n.ms ? `${n.ms > 1000 ? (n.ms / 1000).toFixed(1) + 's' : n.ms + 'ms'} spent here` : ''].filter(Boolean).join(' · ');
     animateNumber(node.querySelector('.cnt'), n.passed || 0);
-    setHtml(node.querySelector('.nx'), n.dropped ? `<span class="drop" title="rejected here">✕ ${n.dropped}</span>`
-      : n.ms ? `<span class="ms">${n.ms > 1000 ? (n.ms / 1000).toFixed(1) + 's' : n.ms + 'ms'}</span>` : '');
-    const edge = i && canvas.querySelector(`.edge[data-i="${i}"]`);
-    if (edge) {
-      edge.className = 'edge ' + ((activeIdx === i && running) ? 'on'
-        : (activeIdx === -1 || i <= activeIdx) && nodes[i - 1].passed > 0 ? 'past' : '');
+    setHtml(node.querySelector('.nx'), n.dropped ? `<span class="drop" title="rejected here">✕ ${n.dropped}</span>` : '');
+    const conn = i && canvas.querySelector(`.conn[data-i="${i}"]`);
+    if (conn) {
+      // While live, packages keep flowing into the step that is working.
+      const state = running && i === activeIdx ? ' flow' : i <= reach && nodes[i - 1].passed > 0 ? ' past' : '';
+      conn.className = `conn${state}${!running && conn.classList.contains('send') ? ' send' : ''}`;
     }
   });
+  if (running) stopDemo();
+  else if (!_demoTimer) startDemo();
 
   setHtml($('#wfChip'), !run ? '<span class="wf-live idle"><span class="bl"></span>NO RUNS YET</span>'
     : running ? '<span class="wf-live run"><span class="bl"></span>RUNNING</span>'
@@ -502,6 +516,53 @@ function paintFlow(wf, running) {
   }
 }
 
+let _demoTimer = null;
+
+// Between runs, one package travels the pipeline. Each step it reaches plays
+// its own short animation, then the lap pauses and starts again.
+function startDemo() {
+  stopDemo();
+  if (REDUCED_MOTION) return;
+  let step = 0;
+  const tick = () => {
+    const canvas = $('#wfCanvas');
+    if (VIEW !== 'workflow' || !canvas) { stopDemo(); return; }
+    const nodes = [...canvas.querySelectorAll('.node')];
+    const last = Math.min(+canvas.dataset.reach, nodes.length - 1);
+    if (!(last >= 0)) { _demoTimer = setTimeout(tick, 3000); return; }
+    const i = step % (last + 2);  // the extra beat is the pause before the next lap
+    step++;
+    if (i <= last) {
+      const conn = canvas.querySelector(`.conn[data-i="${i}"]`);
+      if (conn) {
+        flash(conn, 'send', 850);
+        setTimeout(() => { if (_demoTimer) flash(nodes[i], 'work', 1300); }, 650);
+      } else {
+        flash(nodes[i], 'work', 1300);
+      }
+    }
+    _demoTimer = setTimeout(tick, i <= last ? 1500 : 2400);
+  };
+  _demoTimer = setTimeout(tick, 700);
+}
+
+function stopDemo() {
+  clearTimeout(_demoTimer);
+  _demoTimer = null;
+  document.querySelectorAll('#wfCanvas .work, #wfCanvas .send').forEach(el => el.classList.remove('work', 'send'));
+}
+
+// Put a class on just long enough for its animation to play once, restarting
+// the animation if the class was already there.
+function flash(el, cls, ms) {
+  if (!el) return;
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+  clearTimeout(el['_' + cls]);
+  el['_' + cls] = setTimeout(() => el.classList.remove(cls), ms);
+}
+
 function colorLog(line) {
   const e = esc(line);
   if (/\bx\s|error|FAILED|refus/i.test(line)) return `<span class="no">${e}</span>`;
@@ -521,7 +582,7 @@ function renderDrops(nodes) {
     <div style="margin-bottom:9px">
       <div class="row" style="justify-content:space-between;font-size:12.5px;margin-bottom:3px">
         <span>${esc(n.label)}</span><b class="mono">${n.dropped}</b></div>
-      <div class="bar"><i style="width:${Math.round(n.dropped / max * 100)}%;background:linear-gradient(90deg,#F472B6,var(--warn))"></i></div>
+      <div class="bar"><i style="width:${Math.round(n.dropped / max * 100)}%;background:#E58E8E"></i></div>
       ${n.drop_detail ? `<div class="muted" style="font-size:11px;margin-top:3px">Last: ${esc(n.drop_detail)}</div>` : ''}
     </div>`).join(''));
 }
@@ -949,6 +1010,7 @@ const SERVICE_ICON = {
   ai_agent: NODE_ICONS.brain,
   ai_automation: NODE_ICONS.trigger,
 };
+const svcIcon = k => SERVICE_ICON[k] || NODE_ICONS.rocket;
 
 VIEWS.campaigns = async function () {
   const list = await api('/api/campaigns');
@@ -960,6 +1022,7 @@ VIEWS.campaigns = async function () {
          out through the dispatcher, which runs every 10 minutes.</p></div>
       <div class="row">
         <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
+        <button class="btn" onclick="openServices()">Services</button>
         <button class="btn" onclick="dispatchNow()">Send queued now</button>
       </div>
     </div>
@@ -985,9 +1048,9 @@ function campCard(c, i) {
   const st = c.last_run && c.last_run.stats;
   return `
     <div class="camp${c.enabled ? '' : ' off'}" data-id="${c.id}" tabindex="0" role="button"
-         aria-label="Edit ${esc(c.name)}" style="--h:${SERVICE_HUE[c.service_category] || '#22D3EE'};--i:${i}">
+         aria-label="Edit ${esc(c.name)}" style="--i:${i}">
       <div class="camp-top">
-        <span class="camp-ico">${svgIcon(SERVICE_ICON[c.service_category] || NODE_ICONS.doc, 18)}</span>
+        <span class="camp-ico">${svgIcon(svcIcon(c.service_category), 18)}</span>
         <div class="camp-name"><b>${esc(c.name)}</b><small>${esc(SERVICE_LABEL[c.service_category] || c.service_category)}</small></div>
         <label class="sw" title="${c.enabled ? 'On — click to pause' : 'Paused — click to switch on'}">
           <input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCampaign(${c.id}, this.checked)" aria-label="Enabled"><i></i></label>
@@ -1044,15 +1107,165 @@ const toggleCampaign = (id, v) => updateCampaign(id, { enabled: v })
   .then(() => { if (VIEW === 'campaigns') VIEWS.campaigns(); })
   .catch(e => toast(e.message, 'bad'));
 
+
+/* --------------------------------------------------------------- services */
+
+// What the agent will look for, shown under the service picker so nobody has to guess.
+function ceServiceHint() {
+  const box = $('#ceSvcHint');
+  if (!box) return;
+  const key = $('#ceService').value, s = _svcs.find(x => x.key === key);
+  if (!s) { box.innerHTML = ''; return; }
+  const kws = s.keywords || [];
+  box.innerHTML = `
+    <b>Searches for:</b> ${esc(kws.slice(0, 6).join(', '))}${kws.length > 6 ? ` <span class="muted">+${kws.length - 6} more</span>` : ''}
+    ${s.builtin ? '<span class="tag grey">built in</span>'
+      : `<button type="button" class="linkbtn" onclick="serviceFromEditor('${esc(s.key)}')">Edit this service</button>`}`;
+}
+
+// Open the service form from inside the agent editor without losing what was typed there.
+function serviceFromEditor(key) {
+  Object.assign(_ce, ceRead());
+  openServiceForm(key, 'editor');
+}
+
+let _sf = null;  // the service open in the form
+
+function openServiceForm(key, back) {
+  const d = $('#drawer');
+  d.classList.add('on'); $('#drawerBg').classList.add('on');
+  const s = key ? _svcs.find(x => x.key === key) : null;
+  if (key && !s) { toast('That service no longer exists', 'bad'); return; }
+  _sf = { key: key || null, back };
+  const isNew = !key;
+  d.innerHTML = `
+    <div class="ce-head">
+      <span class="ce-ico">${svgIcon(isNew ? NODE_ICONS.plus : svcIcon(key), 20)}</span>
+      <div style="min-width:0"><span class="ce-kicker">${isNew ? 'New service' : 'Edit service'}</span>
+        <h2>${isNew ? 'Add a service' : esc(s.label)}</h2></div>
+      <span class="sp"></span><button class="btn ghost" onclick="serviceBack()">Back</button>
+    </div>
+    <div class="ce-sec">
+      <p class="fine" style="margin:0 0 14px;font-size:12.5px;line-height:1.55">A service is something you sell. Tell the agent what it is and
+        what to look for, and it finds businesses with a provable reason to need it, then writes emails about it.</p>
+      <div class="inp"><label for="sfLabel">Name</label>
+        <input id="sfLabel" maxlength="80" value="${esc(s ? s.label : '')}" placeholder="e.g. Payroll &amp; HR software"></div>
+      <div class="inp" style="margin-top:14px"><label for="sfPitch">What you sell</label>
+        <textarea id="sfPitch" rows="3" maxlength="600" style="min-height:84px;font-family:inherit;font-size:13px"
+          placeholder="e.g. Cloud payroll and HR software for small and mid-sized businesses">${esc(s ? s.pitch : '')}</textarea>
+        <span class="fine">One or two sentences. The email writer uses this to explain what you offer.</span></div>
+    </div>
+    <div class="ce-sec">
+      <div class="inp"><label for="sfKeywords">Keywords <span class="req">required</span></label>
+        <input id="sfKeywords" value="${esc(s ? s.keywords.join(', ') : '')}" placeholder="payroll software, HR software, employee onboarding">
+        <span class="fine">What the agent searches for in job ads, public tenders and posts. Separate with commas.</span></div>
+      <div class="inp" style="margin-top:14px"><label for="sfPhrases">What buyers say when they need it <span class="opt">optional</span></label>
+        <textarea id="sfPhrases" rows="3" style="min-height:84px;font-family:inherit;font-size:13px"
+          placeholder="looking for a payroll provider&#10;need HR software">${esc(s ? s.intent_phrases.join('\n') : '')}</textarea>
+        <span class="fine">One phrase per line, as someone would write it in a post. Leave empty and the agent builds “looking for …” and “need …” from your keywords.</span></div>
+      <div class="inp" style="margin-top:14px"><label for="sfIndustries">Businesses that buy this <span class="opt">optional</span></label>
+        <input id="sfIndustries" value="${esc(s ? s.industries.join(', ') : '')}" placeholder="accounting, recruitment, retail">
+        <span class="fine">Kinds of business, separated by commas. Leads in these sectors score higher, and the agent searches for them on the map.</span></div>
+    </div>
+    <div class="ce-foot">
+      <button class="btn primary" id="sfSave" onclick="saveService()">${isNew ? 'Add service' : 'Save service'}</button>
+      <button class="btn" onclick="serviceBack()">Cancel</button>
+      <span class="sp"></span>
+      ${isNew ? '' : `<button class="btn danger" onclick="deleteService('${esc(key)}')">Delete</button>`}
+    </div>`;
+  d.scrollTop = 0;
+  if (isNew) $('#sfLabel').focus();
+}
+
+function serviceBack() {
+  if (_sf && _sf.back === 'editor' && _ce) paintCampaignEditor();
+  else openServices();
+}
+
+async function saveService() {
+  const split = (id, sep) => $(id).value.split(sep).map(x => x.trim()).filter(Boolean);
+  const body = {
+    label: $('#sfLabel').value.trim(), pitch: $('#sfPitch').value.trim(),
+    keywords: split('#sfKeywords', /[,\n]/), intent_phrases: split('#sfPhrases', /\n/),
+    industries: split('#sfIndustries', /[,\n]/),
+  };
+  if (body.label.length < 2) { toast('Give the service a name', 'bad'); $('#sfLabel').focus(); return; }
+  if (body.pitch.length < 10) { toast('Describe what you sell in a sentence', 'bad'); $('#sfPitch').focus(); return; }
+  if (!body.keywords.length) { toast('Add at least one keyword', 'bad'); $('#sfKeywords').focus(); return; }
+
+  const btn = $('#sfSave');
+  btn.disabled = true;
+  try {
+    let key = _sf.key;
+    if (key) {
+      await api(`/api/services/${key}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    } else {
+      key = (await post('/api/services', body)).key;
+    }
+    await refreshServices();
+    _svcs = await api('/api/services');
+    toast(_sf.key ? 'Service saved' : 'Service added', 'good');
+    if (_sf.back === 'editor' && _ce) { _ce.service_category = key; paintCampaignEditor(); }
+    else openServices();
+  } catch (e) {
+    toast(e.message, 'bad');
+    btn.disabled = false;
+  }
+}
+
+async function deleteService(key) {
+  const s = _svcs.find(x => x.key === key);
+  if (!s || !confirm(`Delete the service "${s.label}"?\n\nLeads already found for it are kept.`)) return;
+  try {
+    await api(`/api/services/${key}`, { method: 'DELETE' });
+    await refreshServices();
+    _svcs = await api('/api/services');
+    if (_ce && _ce.service_category === key) _ce.service_category = 'web_development';
+    toast('Service deleted', 'good');
+    serviceBack();
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
+async function openServices() {
+  const d = $('#drawer');
+  d.classList.add('on'); $('#drawerBg').classList.add('on');
+  d.innerHTML = '<div class="empty">Loading…</div>';
+  try { _svcs = await api('/api/services'); } catch (e) { d.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; return; }
+  _sf = null;
+  d.innerHTML = `
+    <div class="ce-head">
+      <span class="ce-ico">${svgIcon(NODE_ICONS.rocket, 20)}</span>
+      <div style="min-width:0"><span class="ce-kicker">What you sell</span><h2>Services</h2></div>
+      <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button>
+    </div>
+    <p class="fine" style="margin:0 0 14px;font-size:12.5px">Every agent sells one service. The four built-in ones come ready to use; add your own for anything else.</p>
+    <button class="btn primary" onclick="openServiceForm(null, 'list')" style="margin-bottom:14px">${svgIcon(NODE_ICONS.plus)} Add a service</button>
+    ${_svcs.map(s => `
+      <div class="svc-card">
+        <span class="camp-ico" style="width:36px;height:36px">${svgIcon(svcIcon(s.key), 16)}</span>
+        <div style="flex:1;min-width:0">
+          <div class="row" style="gap:8px"><b>${esc(s.label)}</b>${s.builtin ? '<span class="tag grey">built in</span>' : ''}
+            <span class="muted" style="font-size:11.5px">${s.campaigns} ${s.campaigns === 1 ? 'agent' : 'agents'}</span></div>
+          <div class="muted" style="font-size:12px;margin-top:3px">${esc((s.keywords || []).slice(0, 6).join(', '))}${(s.keywords || []).length > 6 ? '…' : ''}</div>
+        </div>
+        ${s.builtin ? '' : `<button class="btn sm" onclick="openServiceForm('${esc(s.key)}', 'list')">Edit</button>`}
+      </div>`).join('')}`;
+  d.scrollTop = 0;
+}
+
 /* -------------------------------------------------------- campaign editor */
 
 let _ce = null;  // the campaign open in the editor; id null while creating
+let _svcs = [];  // /api/services - what each service searches for
 
 async function openCampaign(id) {
   const d = $('#drawer');
   d.classList.add('on'); $('#drawerBg').classList.add('on');
   d.innerHTML = '<div class="empty">Loading…</div>';
   let c = null;
+  try { _svcs = await api('/api/services'); } catch (e) { _svcs = []; }
   if (id) {
     try { c = (await api('/api/campaigns')).find(x => x.id === id); }
     catch (e) { d.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; return; }
@@ -1079,8 +1292,8 @@ function paintCampaignEditor() {
   const sec = (n, title, body) => `<div class="ce-sec" style="--i:${n}"><h4><span>${n}</span>${title}</h4>${body}</div>`;
 
   $('#drawer').innerHTML = `
-    <div class="ce-head" id="ceHead" style="--h:${SERVICE_HUE[c.service_category] || '#22D3EE'}">
-      <span class="ce-ico">${svgIcon(SERVICE_ICON[c.service_category] || NODE_ICONS.doc, 20)}</span>
+    <div class="ce-head" id="ceHead">
+      <span class="ce-ico">${svgIcon(svcIcon(c.service_category), 20)}</span>
       <div style="min-width:0"><span class="ce-kicker">${isNew ? 'New agent' : 'Edit agent'}</span>
         <h2>${isNew ? 'Create an agent' : esc(c.name)}</h2></div>
       <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button>
@@ -1090,10 +1303,12 @@ function paintCampaignEditor() {
       <div class="grid2">
         <div class="inp"><label for="ceName">Name</label>
           <input id="ceName" value="${esc(c.name)}" maxlength="120" placeholder="e.g. UK restaurants — websites"></div>
-        <div class="inp"><label for="ceService">Service it sells</label>
+        <div class="inp"><label for="ceService" class="lbl-row">Service it sells
+            <button type="button" class="linkbtn" onclick="serviceFromEditor(null)">＋ Add new service</button></label>
           <select id="ceService">${(META.services || []).map(s =>
             `<option value="${esc(s.key)}" ${s.key === c.service_category ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></div>
       </div>
+      <div class="svc-hint" id="ceSvcHint"></div>
       <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceEnabled" ${c.enabled ? 'checked' : ''}><i></i></span>
         Enabled — runs automatically on its schedule</label>`)}
 
@@ -1162,9 +1377,10 @@ function paintCampaignEditor() {
   });
   $('#ceService').onchange = e => {
     const head = $('#ceHead');
-    head.style.setProperty('--h', SERVICE_HUE[e.target.value] || '#22D3EE');
-    head.querySelector('.ce-ico').innerHTML = svgIcon(SERVICE_ICON[e.target.value] || NODE_ICONS.doc, 20);
+    head.querySelector('.ce-ico').innerHTML = svgIcon(svcIcon(e.target.value), 20);
+    ceServiceHint();
   };
+  ceServiceHint();
   ceRotateChanged();
   if (isNew) $('#ceName').focus();
 }
@@ -1184,11 +1400,11 @@ function ceRotateChanged() {
     : 'Comma-separated. Leave empty to use each source’s default area.';
 }
 
-async function saveCampaign() {
+function ceRead() {
   const c = _ce;
   const picked = id => [...document.querySelectorAll(`#${id} .chk.on`)].map(b => b.dataset.v);
   const listOf = id => $(id).value.split(',').map(s => s.trim()).filter(Boolean);
-  const body = {
+  return {
     name: $('#ceName').value.trim(),
     service_category: $('#ceService').value,
     enabled: $('#ceEnabled').checked,
@@ -1204,6 +1420,11 @@ async function saveCampaign() {
     daily_lead_limit: +$('#ceLeads').value,
     daily_email_limit: c.daily_email_limit ?? 20,
   };
+}
+
+async function saveCampaign() {
+  const c = _ce;
+  const body = ceRead();
   if (!body.name) { toast('Give the agent a name', 'bad'); $('#ceName').focus(); return; }
   if (!body.schedule_time) { toast('Pick a start time', 'bad'); $('#ceTime').focus(); return; }
   if (!body.countries.length) { toast('Pick at least one country', 'bad'); return; }
@@ -1464,6 +1685,7 @@ async function rmSup(id) {
 (async () => {
   try {
     META = await api('/api/meta');
+    syncServices();
     const s = await api('/api/stats/summary');
     window._pending = s.pending_approval;
   } catch (e) {

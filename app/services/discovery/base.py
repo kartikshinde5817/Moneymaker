@@ -134,7 +134,11 @@ KEYWORD_GROUPS: dict[str, list[str]] = {
 def keywords_for(service_category: str, override: list[str] | None = None) -> list[str]:
     if override:
         return [k for k in override if k.strip()]
-    return KEYWORD_GROUPS.get(service_category, [service_category.replace("_", " ")])
+    if service_category in KEYWORD_GROUPS:
+        return KEYWORD_GROUPS[service_category]
+    # Imported here: catalog reads the database, which discovery must not need at import time.
+    from app.services import catalog
+    return catalog.keywords_for(service_category) or [service_category.replace("_", " ")]
 
 
 def utcnow() -> dt.datetime:

@@ -30,6 +30,7 @@ import re
 import httpx
 
 from app.config import settings
+from app.services import catalog
 from app.services.discovery.base import (
     EXPLICIT,
     Prospect,
@@ -121,7 +122,7 @@ class LinkedInSearchSource:
         out = SourceResult()
         if not self.available():
             return out
-        phrases = keywords or INTENT.get(service_category, [])
+        phrases = keywords or INTENT.get(service_category) or catalog.intent_phrases_for(service_category)
         if not phrases:
             return out
 

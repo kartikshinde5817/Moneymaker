@@ -252,6 +252,27 @@ class WebsiteAudit(Base):
 # ---------------------------------------------------------------------------
 
 
+class Service(Base):
+    """A service the user sells, beyond the four built in to the code.
+
+    Built-in services keep their hand-tuned search phrases in code. These rows
+    supply the same four things for a service the user defines: what we sell,
+    what to search for, what people write when they need it, and which kinds of
+    business tend to buy it.
+    """
+
+    __tablename__ = "services"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Stored on leads and campaigns in a String(32) column, so the key is capped there.
+    key: Mapped[str] = mapped_column(String(32), unique=True)
+    label: Mapped[str] = mapped_column(String(80))
+    pitch: Mapped[str] = mapped_column(Text)
+    keywords: Mapped[list] = mapped_column(JSON, default=list)
+    intent_phrases: Mapped[list] = mapped_column(JSON, default=list)
+    industries: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+
+
 class Campaign(Base):
     __tablename__ = "campaigns"
     id: Mapped[int] = mapped_column(primary_key=True)
