@@ -19,6 +19,8 @@ from __future__ import annotations
 import datetime as dt
 import io
 import secrets
+import threading
+import time
 
 import pyotp
 import qrcode
@@ -130,6 +132,43 @@ def create_session(db: DBSession, user: User) -> str:
     return token
 
 
+# The session guard runs on every request. With the database a long network
+# hop away, two queries per request made every page slow, so a token that was
+# valid a moment ago is trusted for SESSION_CACHE_SECONDS. Logging out clears
+# the cache, so a logout still takes effect at once.
+SESSION_CACHE_SECONDS = 60
+_session_cache: dict[str, float] = {}
+_session_cache_lock = threading.Lock()
+
+
+def session_is_valid(db_factory, token: str | None) -> bool:
+    """True if the token belongs to a live session. Blocking: run off the event loop."""
+    if not token:
+        return False
+    now = time.monotonic()
+    with _session_cache_lock:
+        if _session_cache.get(token, 0) > now:
+            return True
+    db = db_factory()
+    try:
+        ok = resolve_session(db, token) is not None
+        db.commit()
+    finally:
+        db.close()
+    if ok:
+        with _session_cache_lock:
+            _session_cache[token] = now + SESSION_CACHE_SECONDS
+    return ok
+
+
+def _forget_sessions(token: str | None = None) -> None:
+    with _session_cache_lock:
+        if token is None:
+            _session_cache.clear()
+        else:
+            _session_cache.pop(token, None)
+
+
 def resolve_session(db: DBSession, token: str | None) -> User | None:
     if not token:
         return None
@@ -152,11 +191,13 @@ def resolve_session(db: DBSession, token: str | None) -> User | None:
 def destroy_session(db: DBSession, token: str | None) -> None:
     if not token:
         return
+    _forget_sessions(token)
     db.execute(delete(SessionRow).where(SessionRow.token == token))
     db.flush()
 
 
 def destroy_all_sessions(db: DBSession, user_id: int) -> None:
+    _forget_sessions()
     db.execute(delete(SessionRow).where(SessionRow.user_id == user_id))
     db.flush()
 

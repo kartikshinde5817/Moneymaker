@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Money Maker", lifespan=lifespan)
 app.add_middleware(SessionGuardMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.include_router(router)
 app.include_router(public_router)
 app.include_router(auth_router)

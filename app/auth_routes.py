@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
@@ -277,27 +278,20 @@ class SessionGuardMiddleware(BaseHTTPMiddleware):
         if not auth.login_required():
             return await call_next(request)
 
+        from app.db import SessionLocal
+
         path = request.url.path
+        token = request.cookies.get(auth.COOKIE_NAME)
+        # The database call runs in a worker thread: done inline it blocked the
+        # event loop, so every other request waited on this one's round trip.
         if path == "/" or any(path.startswith(p) for p in PUBLIC_PREFIXES):
             if path == "/":
-                from app.db import SessionLocal
-                db = SessionLocal()
-                try:
-                    user = auth.current_user(request, db)
-                finally:
-                    db.close()
-                if user is None:
+                if not await run_in_threadpool(auth.session_is_valid, SessionLocal, token):
                     from fastapi.responses import RedirectResponse
                     return RedirectResponse("/auth/login-page")
             return await call_next(request)
 
-        from app.db import SessionLocal
-        db = SessionLocal()
-        try:
-            user = auth.current_user(request, db)
-        finally:
-            db.close()
-        if user is None:
+        if not await run_in_threadpool(auth.session_is_valid, SessionLocal, token):
             if path.startswith("/api/"):
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": "Not authenticated"}, status_code=401)

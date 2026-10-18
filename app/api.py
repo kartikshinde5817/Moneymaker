@@ -64,10 +64,10 @@ def stats_summary(db: Session = Depends(get_db)):
         q = select(func.count(model.id))
         for w in where:
             q = q.where(w)
-        return db.execute(q).scalar_one()
+        return q.scalar_subquery()
 
-    cost = db.execute(select(func.coalesce(func.sum(AIAnalysis.cost_usd), 0.0))).scalar_one()
-    return {
+    # One SELECT of subqueries: a single round trip instead of seventeen.
+    parts = {
         "total_leads": count(Lead),
         "new_today": count(Lead, Lead.created_at >= today),
         "qualified": count(Lead, Lead.score >= scoring.MEDIUM_THRESHOLD, Lead.stage != "rejected"),
@@ -84,9 +84,13 @@ def stats_summary(db: Session = Depends(get_db)):
         "whatsapp_pending": count(WhatsAppMessage, WhatsAppMessage.status == "pending"),
         "interested": count(Lead, Lead.status == "interested"),
         "companies": count(Company),
-        "ai_cost_usd": round(float(cost or 0), 4),
-        "daily_cap": settings.daily_email_cap_global,
+        "ai_cost_usd": select(func.coalesce(func.sum(AIAnalysis.cost_usd), 0.0)).scalar_subquery(),
     }
+    row = db.execute(select(*[v.label(k) for k, v in parts.items()])).one()._mapping
+    out = {k: row[k] for k in parts}
+    out["ai_cost_usd"] = round(float(out["ai_cost_usd"] or 0), 4)
+    out["daily_cap"] = settings.daily_email_cap_global
+    return out
 
 
 @router.get("/stats/breakdown")
@@ -322,15 +326,21 @@ def list_campaigns(db: Session = Depends(get_db)):
     from app.scheduler import upcoming
 
     next_runs = {u["campaign_id"]: u["at"] for u in upcoming(db)}
+    # Two grouped queries for all campaigns, not two queries per campaign.
+    lead_counts = dict(db.execute(
+        select(Lead.campaign_id, func.count(Lead.id)).group_by(Lead.campaign_id)
+    ).all())
+    latest = select(
+        CampaignRun.campaign_id, func.max(CampaignRun.started_at).label("at")
+    ).group_by(CampaignRun.campaign_id).subquery()
+    last_runs = {r.campaign_id: r for r in db.execute(
+        select(CampaignRun).join(latest, (CampaignRun.campaign_id == latest.c.campaign_id)
+                                 & (CampaignRun.started_at == latest.c.at))
+    ).scalars()}
     out = []
     for c in db.execute(select(Campaign).order_by(Campaign.schedule_time)).scalars():
-        last = db.execute(
-            select(CampaignRun).where(CampaignRun.campaign_id == c.id)
-            .order_by(CampaignRun.started_at.desc()).limit(1)
-        ).scalar_one_or_none()
-        leads = db.execute(
-            select(func.count(Lead.id)).where(Lead.campaign_id == c.id)
-        ).scalar_one()
+        last = last_runs.get(c.id)
+        leads = lead_counts.get(c.id, 0)
         out.append({
             "id": c.id, "name": c.name, "service_category": c.service_category,
             "enabled": c.enabled, "sources": c.sources, "keywords": c.keywords,
