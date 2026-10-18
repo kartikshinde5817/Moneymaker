@@ -10,6 +10,8 @@ first time. Flags:
     --no-browser   don't open the dashboard
     --reinstall    force dependency reinstall
     --check        print configuration status and exit
+    --send-only    send approved emails from this computer, nothing else
+                   (for servers that block SMTP, like Render's free plan)
 """
 
 from __future__ import annotations
@@ -160,7 +162,75 @@ def verify_mail() -> None:
             print(f"   --  IMAP login FAILED: {type(exc).__name__}")
 
 
+SEND_EVERY_SECONDS = 60
+
+
+def send_only() -> None:
+    """Send the approved-email queue from this computer, and do nothing else.
+
+    No dashboard, no scheduler, no campaigns: the server keeps doing those.
+    This only needs DATABASE_URL (the same database the server uses), the
+    SMTP_* mailbox, and PUBLIC_BASE_URL set to the server's address so the
+    unsubscribe links in each email work.
+    """
+    import time
+
+    from app.db import session_scope
+    from app.services import mailer, pipeline, sender
+
+    print("\n" + "=" * 66)
+    print("  Money Maker — email sender (this computer)")
+    db_label = settings.database_url.split("@")[-1].split("?")[0]
+    print(f"  Database:   {db_label}")
+    print(f"  Mailbox:    {settings.smtp_user or '(not set)'} via {settings.smtp_host or '(not set)'}")
+    print("=" * 66)
+
+    problems = []
+    if settings.database_url.startswith("sqlite"):
+        problems.append("DATABASE_URL points at the local file database. Put the same "
+                        "postgresql+psycopg://… URL you use on Render into .env.")
+    if not mailer.provider_ready():
+        problems.append("SMTP is not set. Add SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS to .env.")
+    if not _public_ok():
+        problems.append("PUBLIC_BASE_URL must be your Render address (https://….onrender.com), "
+                        "or the unsubscribe links in the emails will not work.")
+    if problems:
+        print("\n  Cannot start:")
+        for p in problems:
+            print(f"   - {p}")
+        sys.exit(1)
+
+    verify_mail()
+    print(f"\n  Checking for approved emails every {SEND_EVERY_SECONDS} s. "
+          "Leave this window open; press Ctrl+C to stop.\n")
+    while True:
+        stamp = time.strftime("%H:%M:%S")
+        try:
+            with session_scope() as db:
+                result = pipeline.dispatch_queue(db, limit=20)
+                sender.heartbeat(db, sent=result["sent"])
+            if result["sent"] or result["failed"] or result["skipped"]:
+                print(f"  {stamp}  sent {result['sent']}, failed {result['failed']}, "
+                      f"skipped {result['skipped']}")
+                for line in result["details"][:10]:
+                    print(f"            {line}")
+            else:
+                print(f"  {stamp}  nothing waiting", end="\r", flush=True)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a network blip must not stop the sender
+            print(f"  {stamp}  error: {type(exc).__name__}: {str(exc)[:200]} (will retry)")
+        time.sleep(SEND_EVERY_SECONDS)
+
+
 def main() -> None:
+    if "--send-only" in sys.argv:
+        try:
+            send_only()
+        except KeyboardInterrupt:
+            print("\n  Sender stopped.")
+        return
+
     url = f"http://{settings.host}:{settings.port}"
     print("\n" + "=" * 66)
     print("  Money Maker — lead generation & outreach")

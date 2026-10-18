@@ -91,6 +91,10 @@ class Settings(BaseSettings):
 
     # --- limits -----------------------------------------------------------
     daily_email_cap_global: int = 100
+    # Render's free plan blocks outgoing SMTP. Set SEND_ON_SERVER=false there:
+    # approving then only queues an email, and `python run.py --send-only` on
+    # your own computer sends the queue through your mailbox.
+    send_on_server: bool = True
     per_mailbox_daily_cap: int = 40
     cooling_off_days: int = 90
     min_score_to_email: int = 55

@@ -141,7 +141,8 @@ function renderFoot() {
   const c = (ok, on, off) => `<span class="chip ${ok ? 'ok' : 'off'}"><span class="dot"></span>${ok ? on : off}</span>`;
   $('#foot').innerHTML =
     c(META.ai_ready, 'Claude AI on (paid)', 'Free mode') +
-    c(META.email_ready, 'Email ready', 'No SMTP') +
+    (META.send_on_server === false ? c(true, 'Sends from your PC', '')
+      : c(META.email_ready, 'Email ready', 'No SMTP')) +
     c(META.scheduler_enabled, 'Scheduler on', 'Scheduler off') +
     c(META.telegram_ready, 'Telegram on', 'No Telegram') +
     c(META.inbox_ready, 'Reply watch on', 'No IMAP');
@@ -718,11 +719,15 @@ VIEWS.dashboard = async function () {
 /* ---------------------------------------------------------------- outbox */
 
 VIEWS.outbox = async function () {
-  const msgs = await api('/api/outbox?status=pending_approval');
+  const [msgs, sum] = await Promise.all([
+    api('/api/outbox?status=pending_approval'), api('/api/outbox/summary'),
+  ]);
   window._pending = msgs.length;
+  const pc = sum.pc_sender;
+  const remote = !sum.send_on_server;
 
   const warn = [];
-  if (!META.email_ready) warn.push('SMTP is not configured, so nothing can actually be sent yet. Add SMTP settings to your .env file.');
+  if (!META.email_ready && !remote) warn.push('SMTP is not configured, so nothing can actually be sent yet. Add SMTP settings to your .env file.');
   if (!META.sender_configured) warn.push('SENDER_EMAIL and COMPANY_POSTAL_ADDRESS must both be set before sending — the postal address is required by US CAN-SPAM law.');
 
   $('#view').innerHTML = `
@@ -732,22 +737,36 @@ VIEWS.outbox = async function () {
          true, then approve. Highlighted evidence is what the email actually cites.</p></div>
       <div class="row">
         <button class="btn" onclick="go('outbox')">Refresh</button>
-        ${msgs.length ? `<button class="btn primary" id="sendAll">Approve &amp; send all (${msgs.length})</button>` : ''}
+        ${msgs.length ? `<button class="btn primary" id="sendAll">${remote ? 'Approve' : 'Approve &amp; send'} all (${msgs.length})</button>` : ''}
       </div>
     </div>
     ${warn.map(w => `<div class="banner">${esc(w)}</div>`).join('')}
+    ${remote || sum.queued || sum.failed ? `
+    <div class="card sendbar">
+      ${remote ? `<span class="pcdot ${pc.alive ? 'on' : ''}"></span>
+        <div style="flex:1;min-width:220px">
+          <b>${pc.alive ? 'Your computer is sending' : 'Your computer sender is not running'}</b>
+          <div class="muted" style="font-size:12.5px">${pc.alive
+            ? `Checked in ${fmtWhen(pc.last_seen)}${pc.host ? ' from ' + esc(pc.host) : ''}. Approved emails go out within a minute.`
+            : `Approved emails wait here until you start it. On your computer run <code>python run.py --send-only</code>${pc.last_seen ? ` · last seen ${fmtWhen(pc.last_seen)}` : ''}.`}</div>
+        </div>` : '<div style="flex:1"></div>'}
+      <span class="tag grey">${sum.queued} queued</span>
+      ${sum.failed ? `<span class="pill failed">${sum.failed} failed</span>
+        <button class="btn sm" onclick="retryFailed()">Retry failed</button>` : ''}
+    </div>` : ''}
     <div id="obList">${msgs.length ? msgs.map(obCard).join('') : `
       <div class="empty"><h3>Nothing waiting for approval</h3>
       <p>Run a campaign to generate drafts, or draft one from a lead.</p></div>`}</div>`;
 
   if ($('#sendAll')) $('#sendAll').onclick = async () => {
-    if (!confirm(`Approve and send all ${msgs.length} emails?\n\nThey will go out immediately.`)) return;
+    if (!confirm(`Approve ${remote ? '' : 'and send '}all ${msgs.length} emails?\n\n${remote
+      ? 'Your computer sender will send them.' : 'They will go out immediately.'}`)) return;
     let ok = 0, fail = 0;
     for (const m of msgs) {
       try { const r = await post(`/api/outbox/${m.id}/approve?send_now=true`); r.ok ? ok++ : fail++; }
       catch (e) { fail++; }
     }
-    toast(`Sent ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'bad' : 'good');
+    toast(`${remote ? 'Approved' : 'Sent'} ${ok}${fail ? `, ${fail} failed` : ''}`, fail ? 'bad' : 'good');
     go('outbox');
   };
 };
@@ -791,6 +810,14 @@ function obCard(m) {
     </div></div>`;
 }
 
+async function retryFailed() {
+  try {
+    const r = await post('/api/outbox/retry-failed');
+    toast(`${r.requeued} email${r.requeued === 1 ? '' : 's'} back in the queue`, 'good');
+    go('outbox');
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
 async function saveDraft(id) {
   try {
     await patch(`/api/outbox/${id}`, { subject: $('#sub' + id).value, body: $('#bod' + id).value });
@@ -801,7 +828,10 @@ async function approve(id) {
   try {
     await patch(`/api/outbox/${id}`, { subject: $('#sub' + id).value, body: $('#bod' + id).value });
     const r = await post(`/api/outbox/${id}/approve?send_now=true`);
-    if (r.ok) { toast('Sent', 'good'); const c = $('#ob' + id); if (c) c.remove(); }
+    if (r.ok) {
+      toast(r.status === 'sent' ? 'Sent' : 'Approved — your computer sender will send it', 'good');
+      const c = $('#ob' + id); if (c) c.remove();
+    }
     else toast(r.detail || 'Could not send', 'bad');
   } catch (e) { toast(e.message, 'bad'); }
 }
@@ -1093,7 +1123,7 @@ VIEWS.campaigns = async function () {
       <div class="row">
         <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
         <button class="btn" onclick="openServices()">Services</button>
-        <button class="btn" onclick="dispatchNow()">Send queued now</button>
+        ${META.send_on_server === false ? '' : '<button class="btn" onclick="dispatchNow()">Send queued now</button>'}
       </div>
     </div>
     ${list.length ? `<div class="camps">${list.map(campCard).join('')}</div>` : `

@@ -71,6 +71,8 @@ def _poll_inbox() -> None:
 
 
 def _dispatch() -> None:
+    if not settings.send_on_server:
+        return  # the PC sender (run.py --send-only) sends the queue
     try:
         with session_scope() as db:
             result = pipeline.dispatch_queue(db, limit=20)

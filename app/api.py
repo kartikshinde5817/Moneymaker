@@ -40,6 +40,7 @@ def meta(db: Session = Depends(get_db)):
     return {
         "app": "Money Maker",
         "ai_ready": ai.available(),
+        "send_on_server": settings.send_on_server,
         "email_ready": mailer.provider_ready(),
         "sender_configured": bool(settings.sender_email and settings.company_postal_address),
         "sources": available_sources(),
@@ -855,7 +856,7 @@ def approve_message(message_id: int, send_now: bool = True, db: Session = Depend
     lead.stage = "queued"
     db.commit()
 
-    if send_now:
+    if send_now and settings.send_on_server:
         sent, detail = mailer.send_message(db, m)
         db.commit()
         return {"ok": sent, "detail": detail, "status": m.status}
@@ -878,7 +879,28 @@ def reject_message(message_id: int, db: Session = Depends(get_db)):
 
 @router.post("/outbox/dispatch")
 def dispatch_now(limit: int = 25, db: Session = Depends(get_db)):
+    if not settings.send_on_server:
+        return {"sent": 0, "failed": 0, "skipped": 0,
+                "details": ["Emails are sent from your computer (run.py --send-only), not this server."]}
     return pipeline.dispatch_queue(db, limit=limit)
+
+
+@router.get("/outbox/summary")
+def outbox_summary(db: Session = Depends(get_db)):
+    from app.services import sender
+    return {**sender.outbox_summary(db), "send_on_server": settings.send_on_server}
+
+
+@router.post("/outbox/retry-failed")
+def retry_failed(db: Session = Depends(get_db)):
+    """Put failed sends back in the queue. Every check runs again at send time."""
+    msgs = db.execute(select(EmailMessage).where(EmailMessage.status == "failed")).scalars().all()
+    for m in msgs:
+        m.status = "queued"
+        m.failure_reason = None
+        m.scheduled_for = utcnow()
+    db.commit()
+    return {"requeued": len(msgs)}
 
 
 # ---------------------------------------------------------------------------

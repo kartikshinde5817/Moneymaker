@@ -452,6 +452,15 @@ class WhatsAppMessage(Base):
     created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow, index=True)
 
 
+class AppState(Base):
+    """Small shared values, e.g. when the PC sender last checked in."""
+
+    __tablename__ = "app_state"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+
+
 class Suppression(Base):
     __tablename__ = "suppressions"
     __table_args__ = (UniqueConstraint("scope", "value", name="uq_suppression"),)

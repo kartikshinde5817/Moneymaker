@@ -470,6 +470,12 @@ tbody tr:hover{background:var(--panel-2)}
   .camp-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
+/* outbox: who sends the queue */
+.sendbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 18px}
+.sendbar code{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px}
+.pcdot{width:10px;height:10px;border-radius:50%;background:#CBD5E1;flex-shrink:0}
+.pcdot.on{background:var(--good);box-shadow:0 0 0 4px rgba(14,159,110,.15)}
+
 /* instant feedback while the server answers */
 body::before{content:'';position:fixed;top:0;left:0;right:0;height:2px;z-index:100;pointer-events:none;opacity:0;
   background:linear-gradient(90deg,transparent,var(--brand-2),transparent);background-size:40% 100%;background-repeat:no-repeat;
