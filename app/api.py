@@ -8,7 +8,7 @@ import threading
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -156,6 +156,7 @@ class CampaignIn(BaseModel):
     locations: list[str] = []
     countries: list[str] = ["GB", "US"]
     schedule_time: str = "07:00"
+    schedule_days: str = "mon-fri"
     enabled: bool = True
     daily_lead_limit: int = 25
     daily_email_limit: int = 20
@@ -179,7 +180,8 @@ def list_campaigns(db: Session = Depends(get_db)):
             "id": c.id, "name": c.name, "service_category": c.service_category,
             "enabled": c.enabled, "sources": c.sources, "keywords": c.keywords,
             "locations": c.locations, "countries": c.countries,
-            "schedule_time": c.schedule_time, "min_score": c.min_score,
+            "schedule_time": c.schedule_time, "schedule_days": c.schedule_days,
+            "min_score": c.min_score,
             "daily_lead_limit": c.daily_lead_limit,
             "daily_email_limit": c.daily_email_limit,
             "approval_mode": c.approval_mode, "total_leads": leads,
@@ -222,6 +224,10 @@ def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
     c = db.get(Campaign, campaign_id)
     if not c:
         raise HTTPException(404, "campaign not found")
+    # Leads outlive the campaign that found them: detach rather than lose them.
+    # Lead.campaign_id has no ON DELETE rule, so Postgres refuses the delete
+    # while any lead still points here.
+    db.execute(update(Lead).where(Lead.campaign_id == c.id).values(campaign_id=None))
     db.delete(c)
     db.commit()
     from app.scheduler import reschedule

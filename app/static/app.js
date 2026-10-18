@@ -711,12 +711,13 @@ VIEWS.campaigns = async function () {
           <b style="font-size:15px">${esc(c.name)}</b>
           <span class="tag">${esc(SERVICE_LABEL[c.service_category] || c.service_category)}</span>
           <span class="pill ${c.enabled ? 'sent' : 'rejected'}">${c.enabled ? 'enabled' : 'disabled'}</span>
-          <span class="muted mono" style="font-size:12.5px">daily at ${esc(c.schedule_time)}</span>
+          <span class="muted mono" style="font-size:12.5px">${esc(DAYS_LABEL[c.schedule_days] || c.schedule_days)} at ${esc(c.schedule_time)}</span>
           <span class="sp"></span>
           <span class="muted" style="font-size:12.5px">${c.total_leads} leads</span>
           <button class="btn sm primary" ${c.running ? 'disabled' : ''} onclick="runCampaign(${c.id})">
             ${c.running ? '<span class="spin"></span> Running' : 'Run now'}</button>
           ${c.last_run ? `<button class="btn sm" onclick="showRun(${c.last_run.id})">Last log</button>` : ''}
+          <button class="btn sm ghost" ${c.running ? 'disabled' : ''} onclick="deleteCampaign(${c.id})">Delete</button>
         </div>
         <div class="grid2">
           <div class="inp"><label>Sources</label>
@@ -730,6 +731,9 @@ VIEWS.campaigns = async function () {
         <div class="row" style="margin-top:12px">
           <label class="row" style="font-size:12.5px;gap:6px"><input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCampaign(${c.id},this.checked)"> Enabled</label>
           <label class="row" style="font-size:12.5px;gap:6px">Time <input type="time" value="${esc(c.schedule_time)}" onchange="setTime(${c.id},this.value)" style="border:1px solid var(--line);border-radius:6px;padding:4px 7px"></label>
+          <label class="row" style="font-size:12.5px;gap:6px">Days
+            <select onchange="setDays(${c.id},this.value)" style="border:1px solid var(--line);border-radius:6px;padding:4px 7px">
+              ${Object.entries(DAYS_LABEL).map(([v, l]) => `<option value="${v}" ${c.schedule_days === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label class="row" style="font-size:12.5px;gap:6px">Min score <input type="number" min="0" max="100" value="${c.min_score}" onchange="setMinScore(${c.id},this.value)" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:4px 7px"></label>
           <label class="row" style="font-size:12.5px;gap:6px">Daily leads <input type="number" min="1" max="200" value="${c.daily_lead_limit}" onchange="setLimit(${c.id},this.value)" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:4px 7px"></label>
           <label class="row" style="font-size:12.5px;gap:6px">Approval
@@ -744,6 +748,8 @@ VIEWS.campaigns = async function () {
       </div>`).join('')}`;
 };
 
+const DAYS_LABEL = { 'mon-fri': 'Mon–Fri', daily: 'Every day', weekends: 'Weekends' };
+
 let _campaigns = {};
 async function updateCampaign(id, changes) {
   const list = await api('/api/campaigns');
@@ -752,7 +758,8 @@ async function updateCampaign(id, changes) {
   const body = {
     name: c.name, service_category: c.service_category, sources: c.sources,
     keywords: c.keywords, locations: c.locations, countries: c.countries,
-    schedule_time: c.schedule_time, enabled: c.enabled,
+    schedule_time: c.schedule_time, schedule_days: c.schedule_days, enabled: c.enabled,
+    rotate_cities: c.rotate_cities,
     daily_lead_limit: c.daily_lead_limit, daily_email_limit: c.daily_email_limit,
     approval_mode: c.approval_mode, min_score: c.min_score, ...changes,
   };
@@ -763,9 +770,21 @@ async function updateCampaign(id, changes) {
 }
 const toggleCampaign = (id, v) => updateCampaign(id, { enabled: v });
 const setTime = (id, v) => updateCampaign(id, { schedule_time: v });
+const setDays = (id, v) => updateCampaign(id, { schedule_days: v }).then(() => VIEWS.campaigns());
 const setMinScore = (id, v) => updateCampaign(id, { min_score: +v });
 const setLimit = (id, v) => updateCampaign(id, { daily_lead_limit: +v });
 const setApproval = (id, v) => updateCampaign(id, { approval_mode: v });
+
+async function deleteCampaign(id) {
+  const c = (await api('/api/campaigns')).find(x => x.id === id);
+  if (!c) return;
+  if (!confirm(`Delete campaign "${c.name}"?\n\nIts schedule and run history are removed. Leads it already found are kept.`)) return;
+  try {
+    await api(`/api/campaigns/${id}`, { method: 'DELETE' });
+    toast('Campaign deleted', 'good');
+    VIEWS.campaigns();
+  } catch (e) { toast(e.message, 'bad'); }
+}
 
 async function runCampaign(id) {
   try {
