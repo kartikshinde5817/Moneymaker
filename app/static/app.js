@@ -23,7 +23,12 @@ const SOURCE_LABEL = {
   serp: 'Web search', serper: 'Web search', yelp: 'Yelp', github: 'GitHub',
   contracts_finder: 'Contracts Finder', find_a_tender: 'Find a Tender',
   sam_gov: 'SAM.gov', adzuna: 'Adzuna', openstreetmap: 'OpenStreetMap',
+  linkedin_search: 'LinkedIn (via search)',
 };
+const SERVICE_HUE = {
+  web_development: '#22D3EE', computer_vision: '#A78BFA', ai_agent: '#F472B6', ai_automation: '#FBBF24',
+};
+const DAYS_LABEL = { 'mon-fri': 'Mon–Fri', daily: 'Every day', weekends: 'Weekends' };
 
 function toast(msg, kind) {
   const t = $('#toast');
@@ -37,7 +42,13 @@ async function api(path, opts = {}) {
   const r = await fetch(path, opts);
   if (!r.ok) {
     let m = `Error ${r.status}`;
-    try { m = (await r.json()).detail || m; } catch (e) { /* non-JSON error */ }
+    try {
+      const d = (await r.json()).detail;
+      // FastAPI validation errors arrive as a list of {loc, msg}.
+      m = Array.isArray(d)
+        ? d.map(x => `${(x.loc || []).slice(-1)[0] || 'value'}: ${String(x.msg).replace(/^Value error, /, '')}`).join('; ')
+        : d || m;
+    } catch (e) { /* non-JSON error */ }
     throw new Error(m);
   }
   return (r.headers.get('content-type') || '').includes('json') ? r.json() : r.text();
@@ -109,29 +120,106 @@ const NODE_ICONS = {
   gauge:   'M12 21a9 9 0 110-18 9 9 0 010 18zM12 12l4-4',
   pen:     'M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5zM2 2l7.586 7.586',
   inbox:   'M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z',
+  x:       'M18 6L6 18M6 6l12 12',
+  clock:   'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2',
+  plus:    'M12 5v14M5 12h14',
+  trash:   'M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6',
+  rocket:  'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09zM12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2zM9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5',
 };
 
-let _wfTimer = null;
+// One hue per stage, in flow order, so work visibly travels across the spectrum.
+const STAGE_HUE = {
+  trigger: '#FBBF24', discovery: '#22D3EE', resolution: '#38BDF8', research: '#818CF8',
+  signals: '#A78BFA', qualify: '#E879F9', scoring: '#F472B6', personalize: '#FB923C', outbox: '#4ADE80',
+};
+
+// Headline numbers from the latest run. They stay on screen after the run ends
+// and only reset when the next agent starts.
+const RUN_STATS = [
+  ['found', 'Found', 'search', '#22D3EE'], ['new_companies', 'New companies', 'merge', '#38BDF8'],
+  ['audited', 'Sites audited', 'globe', '#818CF8'], ['signals', 'Evidence', 'doc', '#A78BFA'],
+  ['qualified', 'Qualified', 'brain', '#E879F9'], ['leads_created', 'Leads', 'gauge', '#F472B6'],
+  ['drafted', 'Drafted', 'pen', '#FB923C'], ['rejected', 'Rejected', 'x', '#F87171'],
+];
+
+const svgIcon = (d, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const pad2 = n => String(n).padStart(2, '0');
+
+// "Today 13:00", "Tomorrow 07:00", "Wed 21 Oct, 07:00" - in the viewer's clock.
+function fmtWhen(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso), now = new Date();
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+  const t = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (days === 0) return `Today ${t}`;
+  if (days === 1) return `Tomorrow ${t}`;
+  if (days === -1) return `Yesterday ${t}`;
+  return `${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}, ${t}`;
+}
+
+function fmtIn(ms) {
+  if (ms <= 0) return 'starting now';
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400),
+    h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return 'in ' + (d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`);
+}
+
+const fmtDur = ms => {
+  const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600);
+  return (h ? h + ':' : '') + pad2(Math.floor(s % 3600 / 60)) + ':' + pad2(s % 60);
+};
+
+// Only touch the DOM when the markup really changed, so running animations
+// (spinners, sheens) are not restarted by every poll.
+const setHtml = (node, html) => { if (node && node._html !== html) { node._html = html; node.innerHTML = html; } };
+
+// Count from the number on screen to the new one. A fresh element counts up
+// from zero, which is what makes a finished run "land" on the screen.
+function animateNumber(node, to) {
+  if (!node) return;
+  const from = node.dataset.v == null ? 0 : +node.dataset.v;
+  node.dataset.v = to;
+  node.classList.toggle('zero', !to);
+  const fmt = v => Math.round(v).toLocaleString();
+  if (REDUCED_MOTION || from === to) { node.textContent = fmt(to); return; }
+  cancelAnimationFrame(node._raf);
+  const t0 = performance.now(), dur = from ? 600 : 1100;
+  const step = now => {
+    const p = Math.min(1, (now - t0) / dur);
+    node.textContent = fmt(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+    if (p < 1) node._raf = requestAnimationFrame(step);
+  };
+  node._raf = requestAnimationFrame(step);
+  if (from) { node.classList.remove('bump'); void node.offsetWidth; node.classList.add('bump'); }
+}
+
+let _wfTimer = null, _wfTick = null, _wf = null, _heroKey = '', _flowKey = '';
 
 VIEWS.workflow = async function () {
   clearTimeout(_wfTimer);
+  clearInterval(_wfTick);
+  _heroKey = _flowKey = '';
   const [wf, camps] = await Promise.all([api('/api/workflow'), api('/api/campaigns')]);
-  const running = wf.run && wf.run.status === 'running';
 
   $('#view').innerHTML = `
     <div class="head">
-      <div><h2>Agent pipeline</h2>
-      <p>Nine stages, run in order for every prospect. What you see below is the real
-         run — each number is work that actually happened, and every drop-off is a
-         business the system decided <em>not</em> to contact.</p></div>
+      <div><h2>Agent control room</h2>
+      <p>Every agent runs these nine stages for each prospect it finds. The numbers are real
+         work from the latest run, and they stay here until the next agent starts.</p></div>
       <div class="row">
-        <select id="wfCamp" class="btn" style="padding:7px 10px">
+        <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
+        ${camps.length ? `
+        <select id="wfCamp" class="btn" style="padding:7px 10px" aria-label="Agent to run">
           ${camps.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
         </select>
-        <button class="btn primary" id="wfRun" ${running ? 'disabled' : ''}>
-          ${running ? '<span class="spin"></span> Running' : '▶ Run agent'}</button>
+        <button class="btn go" id="wfRun">▶ Run agent</button>` : ''}
       </div>
     </div>
+    <div id="wfHero"></div>
     <div id="wfCanvas"></div>
     <div class="grid2" style="margin-top:18px">
       <div class="card"><h3>The gates that protect you</h3>
@@ -151,107 +239,267 @@ VIEWS.workflow = async function () {
         <div id="wfDrops"></div></div>
     </div>`;
 
-  $('#wfRun').onclick = async () => {
-    const id = $('#wfCamp').value;
+  const runBtn = $('#wfRun');
+  if (runBtn) runBtn.onclick = async () => {
     try {
-      await post(`/api/campaigns/${id}/run`);
-      toast('Agent started');
+      await post(`/api/campaigns/${$('#wfCamp').value}/run`);
+      toast('Agent started', 'good');
       paintWorkflow();
     } catch (e) { toast(e.message, 'bad'); }
   };
+  _wfTick = setInterval(tickWorkflow, 1000);
   paintWorkflow(wf);
 };
 
 async function paintWorkflow(pre) {
-  const canvas = $('#wfCanvas');
-  if (!canvas) return;
+  if (!$('#wfCanvas')) return;
   let wf = pre;
-  if (!wf) { try { wf = await api('/api/workflow'); } catch (e) { return; } }
-
-  const run = wf.run, nodes = wf.nodes || [];
-  const running = run && run.status === 'running';
-  const activeKey = wf.active;
-  const activeIdx = nodes.findIndex(n => n.key === activeKey);
-
-  const statusChip = !run
-    ? '<span class="wf-live idle"><span class="bl"></span>NEVER RUN</span>'
-    : running ? '<span class="wf-live run"><span class="bl"></span>RUNNING</span>'
-    : run.status === 'failed' ? '<span class="wf-live fail"><span class="bl"></span>FAILED</span>'
-    : '<span class="wf-live done"><span class="bl"></span>COMPLETED</span>';
-
-  const nodeHtml = nodes.map((n, i) => {
-    const icon = NODE_ICONS[n.icon] || NODE_ICONS.doc;
-    const edgeCls = i === 0 ? '' : (activeIdx === i && running) ? 'on'
-      : (activeIdx === -1 || i <= activeIdx) && nodes[i - 1] && nodes[i - 1].passed > 0 ? 'past' : '';
-    const edge = i === 0 ? '' : `<div class="edge ${edgeCls}"></div>`;
-    return `${edge}
-      <div class="node ${esc(n.status)}${running && n.key === activeKey ? ' running' : ''}" title="${esc(n.detail || n.note)}">
-        ${n.engine === 'llm' ? '<span class="eng llm">LLM</span>'
-          : n.engine === 'rules' ? '<span class="eng">RULES</span>'
-          : n.engine === 'http' ? '<span class="eng">HTTP</span>'
-          : n.engine === 'api' ? '<span class="eng">API</span>' : ''}
-        <div class="ntop">
-          <span class="nico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="${icon}"/></svg></span>
-          <span class="nname">${esc(n.label)}</span>
-        </div>
-        <div class="nnote">${esc(n.note)}</div>
-        <div class="nfoot">
-          <span class="cnt ${n.passed ? '' : 'zero'}">${n.passed}</span>
-          ${n.dropped ? `<span class="drop" title="rejected here">✕ ${n.dropped}</span>`
-            : n.ms ? `<span class="ms">${n.ms > 1000 ? (n.ms / 1000).toFixed(1) + 's' : n.ms + 'ms'}</span>` : ''}
-        </div>
-      </div>`;
-  }).join('');
-
-  const active = nodes.find(n => n.key === activeKey)
-    || [...nodes].reverse().find(n => n.detail || n.drop_detail);
-
-  canvas.innerHTML = `
-    <div class="wf">
-      <div class="wf-head">
-        ${statusChip}
-        <div><h3>${run ? esc(run.campaign) : 'No run yet'}</h3>
-          <div class="wf-sub">${run
-            ? `${esc(run.trigger)} · started ${fmtTime(run.started_at)}${run.stats && run.stats.ai_cost_usd ? ' · $' + run.stats.ai_cost_usd.toFixed(3) + ' AI' : ''}`
-            : 'Pick a campaign above and press Run agent.'}</div></div>
-      </div>
-
-      <div class="wf-flow">${nodeHtml}</div>
-
-      <div class="wf-now">
-        ${running ? '<span class="spin" style="border-top-color:#22D3EE;border-color:rgba(34,211,238,.3)"></span>' : ''}
-        <div style="min-width:0">
-          <div><b>${active ? esc(active.label) : 'Idle'}</b>${
-            run && run.current_item ? ' — ' + esc(run.current_item) : running ? '' : run ? ' — finished' : ''}</div>
-          ${active && (active.detail || active.drop_detail) ? `<div class="wf-detail">${esc(active.detail || active.drop_detail)}</div>` : ''}
-        </div>
-      </div>
-
-      <div class="wf-term" id="wfTerm">${(wf.log || []).map(colorLog).join('\n') || 'Waiting for a run…'}</div>
-
-      <div class="legend">
-        <span><i style="background:#06B6D4"></i>Running</span>
-        <span><i style="background:#2F6B45"></i>Completed</span>
-        <span><i style="background:#F87171"></i>✕ Rejected here</span>
-        <span><i style="background:#FBBF24"></i>LLM stage (costs money)</span>
-        <span><i style="background:#56697A"></i>Idle / skipped</span>
-      </div>
-    </div>`;
-
-  const term = $('#wfTerm');
-  if (term) term.scrollTop = term.scrollHeight;
-  renderDrops(nodes);
+  if (!wf) {
+    try { wf = await api('/api/workflow'); } catch (e) { pollWorkflow(_wf); return; }
+    if (!$('#wfCanvas')) return;  // left the page while the request was in flight
+  }
+  _wf = wf;
+  const running = !!wf.run && wf.run.status === 'running';
+  paintHero(wf, running);
+  paintFlow(wf, running);
+  renderDrops(wf.nodes || []);
 
   const btn = $('#wfRun');
   if (btn) {
-    btn.disabled = !!running;
+    btn.disabled = running;
     btn.innerHTML = running ? '<span class="spin"></span> Running' : '▶ Run agent';
   }
+  tickWorkflow();
+  pollWorkflow(wf);
+}
 
+// Fast while an agent works, quick around a scheduled start, slow otherwise.
+function pollWorkflow(wf) {
   clearTimeout(_wfTimer);
-  if (running && VIEW === 'workflow') _wfTimer = setTimeout(() => paintWorkflow(), 1200);
+  if (VIEW !== 'workflow' || !wf) return;
+  const running = wf.run && wf.run.status === 'running';
+  const next = (wf.upcoming || [])[0];
+  const due = next && new Date(next.at) - Date.now() < 5000;
+  _wfTimer = setTimeout(() => paintWorkflow(), running ? 1200 : due ? 2500 : 20000);
+}
+
+function paintHero(wf, running) {
+  const box = $('#wfHero');
+  if (!box) return;
+  const run = wf.run, up = wf.upcoming || [];
+  // Rebuilt only when what it describes changes; numbers and labels in
+  // between are patched in place so the animations keep running.
+  const key = [running ? 'live' : 'idle', run ? run.id + run.status : 'none', wf.scheduler_enabled,
+    up.map(u => u.campaign_id + '@' + u.at).join(',')].join('|');
+  if (key !== _heroKey) {
+    _heroKey = key;
+    box.innerHTML = heroHtml(wf, running);
+  }
+  const stats = (run && run.stats) || {};
+  box.querySelectorAll('.hx-t .tv').forEach(n => animateNumber(n, +stats[n.dataset.k] || 0));
+  if (running) {
+    const active = (wf.nodes || []).find(n => n.key === wf.active);
+    const stage = $('#hxStage');
+    if (stage) stage.textContent = active ? active.label : 'Starting';
+    const item = $('#hxItem');
+    if (item) item.textContent = run.current_item ? '→ ' + run.current_item : '';
+  }
+}
+
+function heroHtml(wf, running) {
+  const run = wf.run, up = wf.upcoming || [], next = up[0];
+  const svc = k => esc(SERVICE_LABEL[k] || k || 'Agent');
+  let main;
+  if (running) {
+    main = `
+      <span class="pchip live"><span class="pd"></span>LIVE NOW</span>
+      <h2 class="hx-title">${esc(run.campaign)}</h2>
+      <div class="hx-meta"><span class="tag">${svc(run.service)}</span><span class="sep"></span>
+        ${run.trigger === 'scheduled' ? 'Scheduled run' : 'Started by hand'}<span class="sep"></span>since ${fmtWhen(run.started_at)}</div>
+      <div class="hx-live">
+        <div class="hx-stage"><span>Current stage</span><b id="hxStage">Starting</b></div>
+        <div class="hx-stage"><span>Running for</span><b id="hxElapsed" class="mono">00:00</b></div>
+      </div>
+      <div class="hx-item" id="hxItem"></div>`;
+  } else if (next) {
+    main = `
+      <span class="pchip${wf.scheduler_enabled ? '' : ' off'}"><span class="pd"></span>${wf.scheduler_enabled ? 'NEXT AGENT' : 'SCHEDULER OFF'}</span>
+      <h2 class="hx-title">${esc(next.name)}</h2>
+      <div class="hx-meta"><span class="tag">${svc(next.service)}</span><span class="sep"></span>
+        ${fmtWhen(next.at)}<span class="sep"></span>${esc(DAYS_LABEL[next.schedule_days] || next.schedule_days)}</div>
+      ${wf.scheduler_enabled ? countdownHtml(next.at)
+        : '<p class="hx-note">Scheduled runs are switched off (SCHEDULER_ENABLED=false), so this will not start by itself. Use Run agent.</p>'}`;
+  } else {
+    main = `
+      <span class="pchip off"><span class="pd"></span>NO AGENT SCHEDULED</span>
+      <h2 class="hx-title">Nothing queued</h2>
+      <div class="hx-meta">Create an agent, or switch one on in Campaigns.</div>
+      <button class="btn go" style="margin-top:16px" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} Create an agent</button>`;
+  }
+
+  const queue = up.length ? up.slice(0, 6).map((u, i) => `
+      <button class="hx-q${i === 0 && !running ? ' first' : ''}" style="--h:${SERVICE_HUE[u.service] || '#22D3EE'}"
+              onclick="openCampaign(${u.campaign_id})" title="Edit ${esc(u.name)}">
+        <span class="qd"></span>
+        <span class="qn">${esc(u.name)}<small>${svc(u.service)}</small></span>
+        <span class="qt">${fmtWhen(u.at)}<small class="js-in" data-at="${esc(u.at)}">${fmtIn(new Date(u.at) - Date.now())}</small></span>
+      </button>`).join('') : '<div class="hx-empty">No agents are switched on.</div>';
+
+  const cap = running ? '<b>Live numbers</b> — updating as the agent works'
+    : run ? `<b>Last run · ${esc(run.campaign)}</b> — ${run.status === 'failed' ? 'failed' : 'finished'} ${fmtWhen(run.finished_at || run.started_at)}. These stay until the next agent starts.`
+    : '<b>No runs yet</b> — the numbers fill in when the first agent runs.';
+
+  return `
+    <section class="hx${running ? ' live' : ''}">
+      <span class="hx-ring"></span><span class="blob b1"></span><span class="blob b2"></span>
+      <span class="blob b3"></span><span class="hx-grid"></span>
+      <div class="hx-top">
+        <div class="hx-main">${main}</div>
+        <div class="hx-queue"><div class="hx-qh">Agent queue<span>${up.length} scheduled</span></div>${queue}</div>
+      </div>
+      <div class="hx-stats">
+        <div class="hx-cap">${cap}</div>
+        <div class="hx-tiles">${RUN_STATS.map(([k, label, icon, hue], i) => `
+          <div class="hx-t" style="--h:${hue};--i:${i}">
+            <span class="ti">${svgIcon(NODE_ICONS[icon])}</span>
+            <b class="tv zero" data-k="${k}">0</b><span class="tk">${label}</span>
+          </div>`).join('')}</div>
+      </div>
+    </section>`;
+}
+
+function countdownHtml(at) {
+  const s = Math.max(0, Math.floor((new Date(at) - Date.now()) / 1000)), d = Math.floor(s / 86400);
+  const unit = (u, v, label, hide) =>
+    `<div class="cd-u"${hide ? ' hidden' : ''}><b data-u="${u}">${pad2(v)}</b><span>${label}</span></div>`;
+  return `<div class="cd" id="wfCd" data-at="${esc(at)}" role="timer" aria-label="Time until the next agent starts">
+    ${unit('d', d, 'days', !d)}${unit('h', Math.floor(s % 86400 / 3600), 'hours')}<i>:</i>${unit('m', Math.floor(s % 3600 / 60), 'min')}<i>:</i>${unit('s', s % 60, 'sec')}
+  </div>`;
+}
+
+// Once a second: countdown, "in 3h 12m" labels and the elapsed clock. No API calls.
+function tickWorkflow() {
+  if (VIEW !== 'workflow' || !$('#wfHero')) { clearInterval(_wfTick); _wfTick = null; return; }
+  const now = Date.now();
+  document.querySelectorAll('#view .js-in').forEach(n => { n.textContent = fmtIn(new Date(n.dataset.at) - now); });
+  const elapsed = $('#hxElapsed');
+  if (elapsed && _wf && _wf.run) elapsed.textContent = fmtDur(now - new Date(_wf.run.started_at));
+
+  const cd = $('#wfCd');
+  if (!cd) return;
+  const left = Math.floor((new Date(cd.dataset.at) - now) / 1000);
+  if (left <= 0) {
+    if (!cd.classList.contains('go')) {
+      cd.classList.add('go');
+      cd.innerHTML = '<span class="cd-go">Starting now…</span>';
+      pollWorkflow(_wf);
+    }
+    return;
+  }
+  const set = (u, v) => {
+    const b = cd.querySelector(`[data-u="${u}"]`);
+    if (!b) return;
+    if (u === 'd') b.parentElement.hidden = !v;
+    const t = pad2(v);
+    if (b.textContent !== t) { b.textContent = t; b.classList.remove('tick'); void b.offsetWidth; b.classList.add('tick'); }
+  };
+  set('d', Math.floor(left / 86400));
+  set('h', Math.floor(left % 86400 / 3600));
+  set('m', Math.floor(left % 3600 / 60));
+  set('s', left % 60);
+}
+
+function paintFlow(wf, running) {
+  const canvas = $('#wfCanvas');
+  if (!canvas) return;
+  const run = wf.run, nodes = wf.nodes || [];
+  const key = run ? 'run' + run.id : 'none';
+  if (key !== _flowKey || !canvas.querySelector('.wf')) {
+    _flowKey = key;
+    canvas.innerHTML = `
+      <div class="wf">
+        <div class="wf-head">
+          <span id="wfChip"></span>
+          <div><h3>Pipeline</h3><div class="wf-sub" id="wfSub"></div></div>
+        </div>
+        <div class="wf-flow">${nodes.map((n, i) => `
+          ${i ? `<div class="edge" data-i="${i}"><i></i><i></i><i></i></div>` : ''}
+          <div class="node" data-k="${esc(n.key)}" style="--h:${STAGE_HUE[n.key] || '#22D3EE'};--i:${i}">
+            <div class="ntop">
+              <span class="nico">${svgIcon(NODE_ICONS[n.icon] || NODE_ICONS.doc)}<span class="okb">✓</span></span>
+              ${n.engine === 'llm' ? '<span class="eng llm">LLM</span>'
+                : ['rules', 'http', 'api'].includes(n.engine) ? `<span class="eng">${n.engine.toUpperCase()}</span>` : ''}
+            </div>
+            <div class="nname">${esc(n.label)}</div>
+            <div class="nnote">${esc(n.note)}</div>
+            <div class="nfoot"><b class="cnt zero">0</b><span class="nx"></span></div>
+          </div>`).join('')}</div>
+        <div class="wf-now" id="wfNow"></div>
+        <div class="wf-term" id="wfTerm" hidden></div>
+        <div class="legend">
+          <span><i style="background:#22D3EE"></i>Running</span>
+          <span><i style="background:#4ADE80"></i>Completed</span>
+          <span><i style="background:#F87171"></i>✕ Rejected here</span>
+          <span><i style="background:#FBBF24"></i>LLM stage (costs money)</span>
+          <span><i style="background:#4D6075"></i>Not reached / skipped</span>
+        </div>
+      </div>`;
+  }
+
+  const activeIdx = nodes.findIndex(n => n.key === wf.active);
+  nodes.forEach((n, i) => {
+    const node = canvas.querySelector(`.node[data-k="${n.key}"]`);
+    if (!node) return;
+    node.className = `node ${n.status}${running && n.key === wf.active ? ' running' : ''}`;
+    node.title = n.detail || n.note || '';
+    animateNumber(node.querySelector('.cnt'), n.passed || 0);
+    setHtml(node.querySelector('.nx'), n.dropped ? `<span class="drop" title="rejected here">✕ ${n.dropped}</span>`
+      : n.ms ? `<span class="ms">${n.ms > 1000 ? (n.ms / 1000).toFixed(1) + 's' : n.ms + 'ms'}</span>` : '');
+    const edge = i && canvas.querySelector(`.edge[data-i="${i}"]`);
+    if (edge) {
+      edge.className = 'edge ' + ((activeIdx === i && running) ? 'on'
+        : (activeIdx === -1 || i <= activeIdx) && nodes[i - 1].passed > 0 ? 'past' : '');
+    }
+  });
+
+  setHtml($('#wfChip'), !run ? '<span class="wf-live idle"><span class="bl"></span>NO RUNS YET</span>'
+    : running ? '<span class="wf-live run"><span class="bl"></span>RUNNING</span>'
+    : run.status === 'failed' ? '<span class="wf-live fail"><span class="bl"></span>FAILED</span>'
+    : '<span class="wf-live done"><span class="bl"></span>COMPLETED</span>');
+  setHtml($('#wfSub'), run
+    ? `${esc(run.campaign)} · ${esc(run.trigger)} · started ${fmtTime(run.started_at)}${run.stats && run.stats.ai_cost_usd ? ' · $' + run.stats.ai_cost_usd.toFixed(3) + ' AI' : ''}`
+    : 'The stages light up as soon as an agent starts.');
+
+  // Where "Idle" used to be: what is happening now, or which agent is next.
+  const next = (wf.upcoming || [])[0];
+  let now;
+  if (running) {
+    const active = nodes.find(n => n.key === wf.active);
+    now = `<span class="spin" style="border-top-color:#22D3EE;border-color:rgba(34,211,238,.3)"></span>
+      <div style="min-width:0"><div><b>${esc(active ? active.label : 'Starting')}</b>${run.current_item ? ' — ' + esc(run.current_item) : ''}</div>
+      ${active && (active.detail || active.drop_detail) ? `<div class="wf-detail">${esc(active.detail || active.drop_detail)}</div>` : ''}</div>`;
+  } else if (next) {
+    now = `<span class="nx-ico">${svgIcon(NODE_ICONS.rocket, 15)}</span>
+      <div style="min-width:0"><div>Next up: <b>${esc(next.name)}</b> · ${fmtWhen(next.at)} ·
+        <span class="js-in" data-at="${esc(next.at)}">${fmtIn(new Date(next.at) - Date.now())}</span>${wf.scheduler_enabled ? '' : ' (scheduler off)'}</div>
+      ${run ? `<div class="wf-detail">Last run: ${esc(run.campaign)} ${run.status === 'failed' ? 'failed' : 'finished'} ${fmtTime(run.finished_at || run.started_at)}</div>` : ''}</div>`;
+  } else {
+    now = `<span class="nx-ico">${svgIcon(NODE_ICONS.rocket, 15)}</span>
+      <div>No agent is scheduled. Create one with <b>New agent</b>.</div>`;
+  }
+  setHtml($('#wfNow'), now);
+
+  const term = $('#wfTerm'), log = wf.log || [];
+  term.hidden = !log.length;
+  if (log.length) {
+    const html = log.map(colorLog).join('\n');
+    if (term._html !== html) {
+      const atBottom = !term._html || term.scrollHeight - term.scrollTop - term.clientHeight < 40;
+      term._html = html;
+      term.innerHTML = html;
+      if (atBottom) term.scrollTop = term.scrollHeight;
+    }
+  }
 }
 
 function colorLog(line) {
@@ -267,15 +515,15 @@ function renderDrops(nodes) {
   if (!box) return;
   const drops = nodes.filter(n => n.dropped > 0);
   const total = drops.reduce((a, n) => a + n.dropped, 0);
-  if (!total) { box.innerHTML = '<p class="hint" style="margin:0">Nothing has been rejected yet.</p>'; return; }
+  if (!total) { setHtml(box, '<p class="hint" style="margin:0">Nothing has been rejected yet.</p>'); return; }
   const max = Math.max(...drops.map(n => n.dropped));
-  box.innerHTML = drops.map(n => `
+  setHtml(box, drops.map(n => `
     <div style="margin-bottom:9px">
       <div class="row" style="justify-content:space-between;font-size:12.5px;margin-bottom:3px">
         <span>${esc(n.label)}</span><b class="mono">${n.dropped}</b></div>
-      <div class="bar"><i style="width:${Math.round(n.dropped / max * 100)}%;background:var(--warn)"></i></div>
+      <div class="bar"><i style="width:${Math.round(n.dropped / max * 100)}%;background:linear-gradient(90deg,#F472B6,var(--warn))"></i></div>
       ${n.drop_detail ? `<div class="muted" style="font-size:11px;margin-top:3px">Last: ${esc(n.drop_detail)}</div>` : ''}
-    </div>`).join('');
+    </div>`).join(''));
 }
 
 /* ------------------------------------------------------------- dashboard */
@@ -695,62 +943,86 @@ async function draftFor(id) {
 
 /* ------------------------------------------------------------- campaigns */
 
+const SERVICE_ICON = {
+  web_development: NODE_ICONS.globe,
+  computer_vision: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
+  ai_agent: NODE_ICONS.brain,
+  ai_automation: NODE_ICONS.trigger,
+};
+
 VIEWS.campaigns = async function () {
   const list = await api('/api/campaigns');
-  const srcAvail = Object.fromEntries((META.sources || []).map(s => [s.key, s]));
 
   $('#view').innerHTML = `
     <div class="head"><div><h2>Campaigns</h2>
-      <p>Campaigns research on schedule. Nothing is emailed at that moment — approved
-         mail goes out through the dispatcher, which runs every 10 minutes.</p></div>
-      <button class="btn" onclick="dispatchNow()">Send queued now</button>
+      <p>Each campaign is an agent with its own schedule, countries and sources. Click a card
+         to edit anything about it. Nothing is emailed when an agent runs — approved mail goes
+         out through the dispatcher, which runs every 10 minutes.</p></div>
+      <div class="row">
+        <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
+        <button class="btn" onclick="dispatchNow()">Send queued now</button>
+      </div>
     </div>
-    ${list.map(c => `
-      <div class="card">
-        <div class="row" style="margin-bottom:10px">
-          <b style="font-size:15px">${esc(c.name)}</b>
-          <span class="tag">${esc(SERVICE_LABEL[c.service_category] || c.service_category)}</span>
-          <span class="pill ${c.enabled ? 'sent' : 'rejected'}">${c.enabled ? 'enabled' : 'disabled'}</span>
-          <span class="muted mono" style="font-size:12.5px">${esc(DAYS_LABEL[c.schedule_days] || c.schedule_days)} at ${esc(c.schedule_time)}</span>
-          <span class="sp"></span>
-          <span class="muted" style="font-size:12.5px">${c.total_leads} leads</span>
-          <button class="btn sm primary" ${c.running ? 'disabled' : ''} onclick="runCampaign(${c.id})">
-            ${c.running ? '<span class="spin"></span> Running' : 'Run now'}</button>
-          ${c.last_run ? `<button class="btn sm" onclick="showRun(${c.last_run.id})">Last log</button>` : ''}
-          <button class="btn sm ghost" ${c.running ? 'disabled' : ''} onclick="deleteCampaign(${c.id})">Delete</button>
-        </div>
-        <div class="grid2">
-          <div class="inp"><label>Sources</label>
-            <div class="row" style="gap:5px">${(c.sources || []).map(s => {
-              const a = srcAvail[s];
-              return `<span class="pill ${a && a.available ? 'sent' : 'rejected'}" title="${a && a.available ? 'ready' : 'API key missing'}">${esc(SOURCE_LABEL[s] || s)}</span>`;
-            }).join('') || '<span class="muted">all available</span>'}</div></div>
-          <div class="inp"><label>Locations · countries</label>
-            <div class="muted" style="font-size:12.5px">${esc((c.locations || []).join(', ') || 'default')} · ${esc((c.countries || []).join(', '))}</div></div>
-        </div>
-        <div class="row" style="margin-top:12px">
-          <label class="row" style="font-size:12.5px;gap:6px"><input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCampaign(${c.id},this.checked)"> Enabled</label>
-          <label class="row" style="font-size:12.5px;gap:6px">Time <input type="time" value="${esc(c.schedule_time)}" onchange="setTime(${c.id},this.value)" style="border:1px solid var(--line);border-radius:6px;padding:4px 7px"></label>
-          <label class="row" style="font-size:12.5px;gap:6px">Days
-            <select onchange="setDays(${c.id},this.value)" style="border:1px solid var(--line);border-radius:6px;padding:4px 7px">
-              ${Object.entries(DAYS_LABEL).map(([v, l]) => `<option value="${v}" ${c.schedule_days === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label class="row" style="font-size:12.5px;gap:6px">Min score <input type="number" min="0" max="100" value="${c.min_score}" onchange="setMinScore(${c.id},this.value)" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:4px 7px"></label>
-          <label class="row" style="font-size:12.5px;gap:6px">Daily leads <input type="number" min="1" max="200" value="${c.daily_lead_limit}" onchange="setLimit(${c.id},this.value)" style="width:70px;border:1px solid var(--line);border-radius:6px;padding:4px 7px"></label>
-          <label class="row" style="font-size:12.5px;gap:6px">Approval
-            <select onchange="setApproval(${c.id},this.value)" style="border:1px solid var(--line);border-radius:6px;padding:4px 7px">
-              <option value="manual" ${c.approval_mode === 'manual' ? 'selected' : ''}>Manual</option>
-              <option value="auto" ${c.approval_mode === 'auto' ? 'selected' : ''}>Auto-send</option></select></label>
-        </div>
-        ${c.last_run && c.last_run.stats ? `<div class="muted" style="font-size:12px;margin-top:10px">
-          Last run: ${c.last_run.stats.leads_created || 0} leads, ${c.last_run.stats.drafted || 0} drafted,
-          ${c.last_run.stats.rejected || 0} rejected, ${c.last_run.stats.errors || 0} errors
-          · ${fmtTime(c.last_run.started_at)}</div>` : ''}
-      </div>`).join('')}`;
+    ${list.length ? `<div class="camps">${list.map(campCard).join('')}</div>` : `
+      <div class="card empty"><h3>No agents yet</h3>
+        <p>Create one to start finding leads.</p>
+        <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button></div>`}`;
+
+  // The whole card opens the editor, except the controls inside it.
+  $('#view').querySelectorAll('.camp').forEach(card => {
+    const open = () => openCampaign(+card.dataset.id);
+    card.onclick = e => { if (!e.target.closest('button, input, label, select, a')) open(); };
+    card.onkeydown = e => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === card) { e.preventDefault(); open(); }
+    };
+  });
 };
 
-const DAYS_LABEL = { 'mon-fri': 'Mon–Fri', daily: 'Every day', weekends: 'Weekends' };
+function campCard(c, i) {
+  const src = Object.fromEntries((META.sources || []).map(s => [s.key, s]));
+  const names = META.country_policy || {};
+  const countries = c.countries || [];
+  const st = c.last_run && c.last_run.stats;
+  return `
+    <div class="camp${c.enabled ? '' : ' off'}" data-id="${c.id}" tabindex="0" role="button"
+         aria-label="Edit ${esc(c.name)}" style="--h:${SERVICE_HUE[c.service_category] || '#22D3EE'};--i:${i}">
+      <div class="camp-top">
+        <span class="camp-ico">${svgIcon(SERVICE_ICON[c.service_category] || NODE_ICONS.doc, 18)}</span>
+        <div class="camp-name"><b>${esc(c.name)}</b><small>${esc(SERVICE_LABEL[c.service_category] || c.service_category)}</small></div>
+        <label class="sw" title="${c.enabled ? 'On — click to pause' : 'Paused — click to switch on'}">
+          <input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCampaign(${c.id}, this.checked)" aria-label="Enabled"><i></i></label>
+      </div>
+      <div class="camp-when">
+        ${svgIcon(NODE_ICONS.clock)} ${esc(DAYS_LABEL[c.schedule_days] || c.schedule_days)} · ${esc(c.schedule_time)}
+        ${c.running ? '<span class="nx live">Running now</span>'
+          : c.enabled && c.next_run ? `<span class="nx">Next: ${fmtWhen(c.next_run)}</span>`
+          : '<span class="nx off">Paused</span>'}
+      </div>
+      <div class="camp-chips">${countries.slice(0, 8).map(k =>
+        `<span class="tag" title="${esc((names[k] || {}).name || k)}">${esc(k)}</span>`).join('')}${
+        countries.length > 8 ? `<span class="tag grey">+${countries.length - 8}</span>` : ''}</div>
+      <div class="camp-chips">${(c.sources || []).length ? c.sources.map(s => {
+          const a = src[s];
+          return `<span class="pill ${a && a.available ? 'sent' : 'rejected'}" title="${a && a.available ? 'ready' : 'API key missing'}">${esc(SOURCE_LABEL[s] || s)}</span>`;
+        }).join('') : '<span class="pill scored">All available sources</span>'}</div>
+      <div class="camp-stats">
+        <div><b>${c.total_leads}</b><span>leads</span></div>
+        <div><b>${st ? st.drafted || 0 : '—'}</b><span>drafted last run</span></div>
+        <div><b>${c.min_score}</b><span>min score</span></div>
+        <div><b>${c.approval_mode === 'auto' ? 'Auto' : 'Manual'}</b><span>approval</span></div>
+      </div>
+      <div class="camp-foot">
+        ${c.last_run ? `<button class="camp-log" onclick="showRun(${c.last_run.id})" title="Open the log of the last run">Last run ${fmtTime(c.last_run.started_at)} ↗</button>`
+          : '<span class="muted">Never run</span>'}
+        <span class="sp"></span>
+        <button class="btn sm ghost icon" onclick="deleteCampaign(${c.id})" title="Delete this campaign" aria-label="Delete ${esc(c.name)}">${svgIcon(NODE_ICONS.trash)}</button>
+        <button class="btn sm" onclick="openCampaign(${c.id})">Edit</button>
+        <button class="btn sm primary" ${c.running ? 'disabled' : ''} onclick="runCampaign(${c.id})">
+          ${c.running ? '<span class="spin"></span> Running' : '▶ Run now'}</button>
+      </div>
+    </div>`;
+}
 
-let _campaigns = {};
 async function updateCampaign(id, changes) {
   const list = await api('/api/campaigns');
   const c = list.find(x => x.id === id);
@@ -768,12 +1040,193 @@ async function updateCampaign(id, changes) {
   });
   toast('Saved', 'good');
 }
-const toggleCampaign = (id, v) => updateCampaign(id, { enabled: v });
-const setTime = (id, v) => updateCampaign(id, { schedule_time: v });
-const setDays = (id, v) => updateCampaign(id, { schedule_days: v }).then(() => VIEWS.campaigns());
-const setMinScore = (id, v) => updateCampaign(id, { min_score: +v });
-const setLimit = (id, v) => updateCampaign(id, { daily_lead_limit: +v });
-const setApproval = (id, v) => updateCampaign(id, { approval_mode: v });
+const toggleCampaign = (id, v) => updateCampaign(id, { enabled: v })
+  .then(() => { if (VIEW === 'campaigns') VIEWS.campaigns(); })
+  .catch(e => toast(e.message, 'bad'));
+
+/* -------------------------------------------------------- campaign editor */
+
+let _ce = null;  // the campaign open in the editor; id null while creating
+
+async function openCampaign(id) {
+  const d = $('#drawer');
+  d.classList.add('on'); $('#drawerBg').classList.add('on');
+  d.innerHTML = '<div class="empty">Loading…</div>';
+  let c = null;
+  if (id) {
+    try { c = (await api('/api/campaigns')).find(x => x.id === id); }
+    catch (e) { d.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; return; }
+    if (!c) { closeDrawer(); toast('That campaign no longer exists', 'bad'); return; }
+  }
+  _ce = c ? { ...c } : {
+    id: null, name: '', service_category: 'web_development', enabled: true,
+    schedule_time: '07:00', schedule_days: 'mon-fri', approval_mode: 'manual',
+    countries: ['GB', 'US'], rotate_cities: true, locations: [], keywords: [], sources: [],
+    min_score: 55, daily_lead_limit: 25, daily_email_limit: 20,
+  };
+  paintCampaignEditor();
+}
+
+const seg = (id, opts, val) => `<div class="seg" id="${id}" role="group">${Object.entries(opts).map(([v, l]) =>
+  `<button type="button" data-v="${esc(v)}" class="${v === val ? 'on' : ''}" aria-pressed="${v === val}">${esc(l)}</button>`).join('')}</div>`;
+
+const chk = (value, label, on, sub = '', dim = false) =>
+  `<button type="button" class="chk${on ? ' on' : ''}${dim ? ' dim' : ''}" data-v="${esc(value)}" aria-pressed="${on}">${esc(label)}${sub ? `<small>${esc(sub)}</small>` : ''}</button>`;
+
+function paintCampaignEditor() {
+  const c = _ce, isNew = !c.id;
+  const sources = META.sources || [];
+  const sec = (n, title, body) => `<div class="ce-sec" style="--i:${n}"><h4><span>${n}</span>${title}</h4>${body}</div>`;
+
+  $('#drawer').innerHTML = `
+    <div class="ce-head" id="ceHead" style="--h:${SERVICE_HUE[c.service_category] || '#22D3EE'}">
+      <span class="ce-ico">${svgIcon(SERVICE_ICON[c.service_category] || NODE_ICONS.doc, 20)}</span>
+      <div style="min-width:0"><span class="ce-kicker">${isNew ? 'New agent' : 'Edit agent'}</span>
+        <h2>${isNew ? 'Create an agent' : esc(c.name)}</h2></div>
+      <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button>
+    </div>
+
+    ${sec(1, 'Basics', `
+      <div class="grid2">
+        <div class="inp"><label for="ceName">Name</label>
+          <input id="ceName" value="${esc(c.name)}" maxlength="120" placeholder="e.g. UK restaurants — websites"></div>
+        <div class="inp"><label for="ceService">Service it sells</label>
+          <select id="ceService">${(META.services || []).map(s =>
+            `<option value="${esc(s.key)}" ${s.key === c.service_category ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></div>
+      </div>
+      <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceEnabled" ${c.enabled ? 'checked' : ''}><i></i></span>
+        Enabled — runs automatically on its schedule</label>`)}
+
+    ${sec(2, 'Schedule', `
+      <div class="grid2">
+        <div class="inp"><label for="ceTime">Start time${META.timezone ? ` (${esc(META.timezone)})` : ''}</label>
+          <input type="time" id="ceTime" value="${esc(c.schedule_time)}"></div>
+        <div class="inp"><label>Days</label>${seg('ceDays', DAYS_LABEL, c.schedule_days)}</div>
+      </div>
+      <div class="inp" style="margin-top:14px"><label>Approval</label>
+        ${seg('ceApproval', { manual: 'Manual — I approve each email', auto: 'Auto-send' }, c.approval_mode)}
+        <span class="fine">Manual holds every draft in the Outbox until you approve it. Auto-send queues drafts straight for sending.</span></div>`)}
+
+    ${sec(3, 'Where to look', `
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <span class="ce-lbl">Countries</span>
+        <span><button type="button" class="btn sm ghost" onclick="ceAllCountries(true)">Select all</button>
+          <button type="button" class="btn sm ghost" onclick="ceAllCountries(false)">Clear</button></span>
+      </div>
+      <div class="chips" id="ceCountries">${Object.entries(META.country_policy || {}).map(([code, p]) =>
+        chk(code, p.name || code, (c.countries || []).includes(code), code)).join('')}</div>
+      <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceRotate" ${c.rotate_cities ? 'checked' : ''} onchange="ceRotateChanged()"><i></i></span>
+        Rotate cities — search new cities from these countries every run</label>
+      <div class="inp" style="margin-top:12px"><label for="ceLocations">Locations</label>
+        <input id="ceLocations" value="${esc((c.locations || []).join(', '))}" placeholder="London, Manchester" ${c.rotate_cities ? 'disabled' : ''}>
+        <span class="fine" id="ceLocHint"></span></div>
+      <div class="inp" style="margin-top:12px"><label for="ceKeywords">Keywords</label>
+        <input id="ceKeywords" value="${esc((c.keywords || []).join(', '))}" placeholder="Leave empty to use the built-in keywords for this service">
+        <span class="fine">Comma-separated search phrases, e.g. new website, online booking system.</span></div>`)}
+
+    ${sec(4, 'Lead sources', `
+      <p class="fine" style="margin:0 0 10px">Pick the sources this agent searches. None selected means every source that is configured.</p>
+      <div class="chips" id="ceSources">${sources.map(s =>
+        chk(s.key, SOURCE_LABEL[s.key] || s.label, (c.sources || []).includes(s.key), s.available ? '' : 'key missing', !s.available)).join('')}</div>`)}
+
+    ${sec(5, 'Quality &amp; volume', `
+      <div class="grid2">
+        <div class="inp"><label for="ceScore">Minimum score to draft: <b id="ceScoreV">${c.min_score}</b></label>
+          <input type="range" id="ceScore" min="0" max="100" value="${c.min_score}" oninput="$('#ceScoreV').textContent=this.value">
+          <span class="fine">Leads scoring below this are kept but never drafted.</span></div>
+        <div class="inp"><label for="ceLeads">Leads per run</label>
+          <input type="number" id="ceLeads" min="1" max="500" value="${c.daily_lead_limit}">
+          <span class="fine">The most new leads one run will create.</span></div>
+      </div>`)}
+
+    <div class="ce-foot">
+      <button class="btn primary" id="ceSave" onclick="saveCampaign()">${isNew ? 'Create agent' : 'Save changes'}</button>
+      <button class="btn" onclick="closeDrawer()">Cancel</button>
+      <span class="sp"></span>
+      ${isNew ? '' : `<button class="btn" onclick="runCampaign(${c.id})">▶ Run now</button>
+        <button class="btn danger" onclick="deleteCampaign(${c.id})">Delete</button>`}
+    </div>`;
+
+  const d = $('#drawer');
+  d.scrollTop = 0;
+  d.querySelectorAll('.seg').forEach(g => g.onclick = e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    g.querySelectorAll('button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
+  });
+  d.querySelectorAll('.chips').forEach(box => box.onclick = e => {
+    const b = e.target.closest('.chk');
+    if (!b) return;
+    b.classList.toggle('on');
+    b.setAttribute('aria-pressed', b.classList.contains('on'));
+  });
+  $('#ceService').onchange = e => {
+    const head = $('#ceHead');
+    head.style.setProperty('--h', SERVICE_HUE[e.target.value] || '#22D3EE');
+    head.querySelector('.ce-ico').innerHTML = svgIcon(SERVICE_ICON[e.target.value] || NODE_ICONS.doc, 20);
+  };
+  ceRotateChanged();
+  if (isNew) $('#ceName').focus();
+}
+
+function ceAllCountries(on) {
+  document.querySelectorAll('#ceCountries .chk').forEach(b => {
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+  });
+}
+
+function ceRotateChanged() {
+  const rotate = $('#ceRotate').checked;
+  $('#ceLocations').disabled = rotate;
+  $('#ceLocHint').textContent = rotate
+    ? 'Not used while city rotation is on.'
+    : 'Comma-separated. Leave empty to use each source’s default area.';
+}
+
+async function saveCampaign() {
+  const c = _ce;
+  const picked = id => [...document.querySelectorAll(`#${id} .chk.on`)].map(b => b.dataset.v);
+  const listOf = id => $(id).value.split(',').map(s => s.trim()).filter(Boolean);
+  const body = {
+    name: $('#ceName').value.trim(),
+    service_category: $('#ceService').value,
+    enabled: $('#ceEnabled').checked,
+    schedule_time: $('#ceTime').value,
+    schedule_days: $('#ceDays .on').dataset.v,
+    approval_mode: $('#ceApproval .on').dataset.v,
+    countries: picked('ceCountries'),
+    rotate_cities: $('#ceRotate').checked,
+    locations: listOf('#ceLocations'),
+    keywords: listOf('#ceKeywords'),
+    sources: picked('ceSources'),
+    min_score: +$('#ceScore').value,
+    daily_lead_limit: +$('#ceLeads').value,
+    daily_email_limit: c.daily_email_limit ?? 20,
+  };
+  if (!body.name) { toast('Give the agent a name', 'bad'); $('#ceName').focus(); return; }
+  if (!body.schedule_time) { toast('Pick a start time', 'bad'); $('#ceTime').focus(); return; }
+  if (!body.countries.length) { toast('Pick at least one country', 'bad'); return; }
+  if (!(body.daily_lead_limit >= 1)) { toast('Leads per run must be at least 1', 'bad'); $('#ceLeads').focus(); return; }
+
+  const btn = $('#ceSave');
+  btn.disabled = true;
+  try {
+    if (c.id) {
+      await api(`/api/campaigns/${c.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    } else {
+      await post('/api/campaigns', body);
+    }
+    toast(c.id ? 'Agent saved' : 'Agent created', 'good');
+    closeDrawer();
+    if (VIEWS[VIEW]) VIEWS[VIEW]();
+  } catch (e) {
+    toast(e.message, 'bad');
+    btn.disabled = false;
+  }
+}
 
 async function deleteCampaign(id) {
   const c = (await api('/api/campaigns')).find(x => x.id === id);
@@ -782,7 +1235,8 @@ async function deleteCampaign(id) {
   try {
     await api(`/api/campaigns/${id}`, { method: 'DELETE' });
     toast('Campaign deleted', 'good');
-    VIEWS.campaigns();
+    closeDrawer();
+    if (VIEWS[VIEW]) VIEWS[VIEW]();
   } catch (e) { toast(e.message, 'bad'); }
 }
 
@@ -793,7 +1247,10 @@ async function runCampaign(id) {
     const list = await api('/api/campaigns');
     const c = list.find(x => x.id === id);
     if (c && c.last_run) showRun(c.last_run.id);
-    setTimeout(() => VIEWS.campaigns(), 1500);
+    setTimeout(() => {
+      if (VIEW === 'campaigns') VIEWS.campaigns();
+      else if (VIEW === 'workflow') paintWorkflow();
+    }, 1500);
   } catch (e) { toast(e.message, 'bad'); }
 }
 

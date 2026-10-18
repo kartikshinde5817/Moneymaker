@@ -12,11 +12,13 @@ takes effect without a restart. Two safeguards matter:
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import session_scope
@@ -78,6 +80,42 @@ def _dispatch() -> None:
         log.exception("dispatcher failed")
 
 
+def _trigger(c: Campaign) -> CronTrigger:
+    hour, minute = (c.schedule_time or "07:00").split(":")
+    return CronTrigger(
+        hour=int(hour), minute=int(minute),
+        day_of_week=DAY_MAP.get(c.schedule_days, "mon-fri"),
+        timezone=settings.scheduler_timezone,
+    )
+
+
+def upcoming(db: Session) -> list[dict]:
+    """Next start of every enabled campaign, soonest first.
+
+    Read from the live job where one exists, so the dashboard shows exactly
+    what the scheduler will do. With the scheduler off, the same trigger is
+    evaluated directly - the times are still right, they just will not fire.
+    """
+    out = []
+    for c in db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars():
+        job = _scheduler.get_job(f"campaign:{c.id}") if _scheduler else None
+        at = job.next_run_time if job else None
+        if at is None:
+            try:
+                trigger = _trigger(c)
+                at = trigger.get_next_fire_time(None, dt.datetime.now(trigger.timezone))
+            except (ValueError, TypeError):
+                continue
+        if at is None:
+            continue
+        out.append((at, {
+            "campaign_id": c.id, "name": c.name, "service": c.service_category,
+            "schedule_time": c.schedule_time, "schedule_days": c.schedule_days,
+            "at": at.isoformat(),
+        }))
+    return [row for _, row in sorted(out, key=lambda pair: pair[0])]
+
+
 def reschedule() -> None:
     """Rebuild every campaign job from the database."""
     if _scheduler is None:
@@ -89,13 +127,8 @@ def reschedule() -> None:
         campaigns = db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars().all()
         for c in campaigns:
             try:
-                hour, minute = (c.schedule_time or "07:00").split(":")
                 _scheduler.add_job(
-                    _run, CronTrigger(
-                        hour=int(hour), minute=int(minute),
-                        day_of_week=DAY_MAP.get(c.schedule_days, "mon-fri"),
-                        timezone=settings.scheduler_timezone,
-                    ),
+                    _run, _trigger(c),
                     id=f"campaign:{c.id}", args=[c.id],
                     replace_existing=True, misfire_grace_time=3600,
                     coalesce=True, max_instances=1,

@@ -7,7 +7,7 @@ import threading
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,7 @@ from app.db import get_db, session_scope
 from app.models import (
     AIAnalysis, Campaign, CampaignRun, Company, Contact, EmailEvent,
     EmailMessage, Lead, Mailbox, SearchQuery, Signal, Source, Suppression,
-    WebsiteAudit, WhatsAppMessage, utcnow,
+    WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
 )
 from app.services import ai, inbox, linkedin, mailer, notify, pipeline, scoring, whatsapp
 from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
@@ -35,6 +35,14 @@ _running_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 
+SERVICES = {
+    "web_development": "Web Development",
+    "computer_vision": "Computer Vision / OpenCV",
+    "ai_agent": "AI Agents",
+    "ai_automation": "AI Automation",
+}
+
+
 @router.get("/meta")
 def meta(db: Session = Depends(get_db)):
     return {
@@ -43,12 +51,7 @@ def meta(db: Session = Depends(get_db)):
         "email_ready": mailer.provider_ready(),
         "sender_configured": bool(settings.sender_email and settings.company_postal_address),
         "sources": available_sources(),
-        "services": [
-            {"key": "web_development", "label": "Web Development"},
-            {"key": "computer_vision", "label": "Computer Vision / OpenCV"},
-            {"key": "ai_agent", "label": "AI Agents"},
-            {"key": "ai_automation", "label": "AI Automation"},
-        ],
+        "services": [{"key": k, "label": v} for k, v in SERVICES.items()],
         "country_policy": {
             code: {"name": COUNTRY_NAMES.get(code, code), "policy": p, "reason": r} for code, (p, r) in COUNTRY_POLICY.items()
         },
@@ -149,7 +152,7 @@ def stats_timeseries(days: int = 30, db: Session = Depends(get_db)):
 
 
 class CampaignIn(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=120)
     service_category: str
     sources: list[str] = []
     keywords: list[str] = []
@@ -158,15 +161,70 @@ class CampaignIn(BaseModel):
     schedule_time: str = "07:00"
     schedule_days: str = "mon-fri"
     enabled: bool = True
-    daily_lead_limit: int = 25
-    daily_email_limit: int = 20
+    daily_lead_limit: int = Field(25, ge=1, le=500)
+    daily_email_limit: int = Field(20, ge=0, le=1000)
     approval_mode: str = "manual"
-    min_score: int = 55
+    min_score: int = Field(55, ge=0, le=100)
     rotate_cities: bool = True
+
+    # A bad value here would not fail on save - it would fail at 07:00 when the
+    # scheduler tries to build the trigger, silently skipping the campaign.
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name is required")
+        return v.strip()
+
+    @field_validator("service_category")
+    @classmethod
+    def _service(cls, v: str) -> str:
+        if v not in SERVICES:
+            raise ValueError(f"unknown service '{v}'")
+        return v
+
+    @field_validator("schedule_time")
+    @classmethod
+    def _time(cls, v: str) -> str:
+        try:
+            hour, minute = (int(p) for p in v.split(":")[:2])
+        except ValueError:
+            raise ValueError("time must be HH:MM") from None
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            raise ValueError("time must be HH:MM")
+        return f"{hour:02d}:{minute:02d}"
+
+    @field_validator("schedule_days")
+    @classmethod
+    def _days(cls, v: str) -> str:
+        from app.scheduler import DAY_MAP
+        if v not in DAY_MAP:
+            raise ValueError(f"days must be one of {', '.join(DAY_MAP)}")
+        return v
+
+    @field_validator("approval_mode")
+    @classmethod
+    def _approval(cls, v: str) -> str:
+        if v not in ("manual", "auto"):
+            raise ValueError("approval must be manual or auto")
+        return v
+
+    @field_validator("countries")
+    @classmethod
+    def _countries(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(c.strip().upper() for c in v if c.strip()))
+
+    @field_validator("sources", "keywords", "locations")
+    @classmethod
+    def _clean_list(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(s.strip() for s in v if s.strip()))
 
 
 @router.get("/campaigns")
 def list_campaigns(db: Session = Depends(get_db)):
+    from app.scheduler import upcoming
+
+    next_runs = {u["campaign_id"]: u["at"] for u in upcoming(db)}
     out = []
     for c in db.execute(select(Campaign).order_by(Campaign.schedule_time)).scalars():
         last = db.execute(
@@ -189,9 +247,10 @@ def list_campaigns(db: Session = Depends(get_db)):
             "city_coverage": __import__("app.services.cities", fromlist=["x"]).coverage(
                 c.countries or [], c.city_history),
             "running": c.id in _running,
+            "next_run": next_runs.get(c.id),
             "last_run": None if not last else {
                 "id": last.id, "status": last.status,
-                "started_at": last.started_at.isoformat() if last.started_at else None,
+                "started_at": as_aware(last.started_at).isoformat() if last.started_at else None,
                 "stats": last.stats,
             },
         })
@@ -203,6 +262,8 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db)):
     c = Campaign(**payload.model_dump())
     db.add(c)
     db.commit()
+    from app.scheduler import reschedule
+    reschedule()
     return {"id": c.id}
 
 
@@ -281,8 +342,16 @@ def workflow_state(db: Session = Depends(get_db)):
 
     Returns the most recent run - active if one is in flight, otherwise the
     last finished one, so the canvas always has something real to show.
+    `upcoming` says which campaign starts next and when, for the countdown.
     """
+    from app.scheduler import upcoming
     from app.services.pipeline import PIPELINE_STAGES
+
+    schedule = {
+        "upcoming": upcoming(db),
+        "scheduler_enabled": settings.scheduler_enabled,
+        "timezone": settings.scheduler_timezone,
+    }
 
     run = db.execute(
         select(CampaignRun).where(CampaignRun.status == "running")
@@ -303,6 +372,7 @@ def workflow_state(db: Session = Depends(get_db)):
         return {
             "run": None, "nodes": idle_nodes, "log": [],
             "campaigns_ready": db.execute(select(func.count(Campaign.id))).scalar_one(),
+            **schedule,
         }
 
     campaign = db.get(Campaign, run.campaign_id)
@@ -315,14 +385,17 @@ def workflow_state(db: Session = Depends(get_db)):
             "campaign": campaign.name if campaign else "—",
             "campaign_id": run.campaign_id,
             "service": campaign.service_category if campaign else "",
-            "started_at": run.started_at.isoformat() if run.started_at else None,
-            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            # Explicit offset: SQLite returns naive values, which a browser
+            # would read as local time and shift the elapsed clock by hours.
+            "started_at": as_aware(run.started_at).isoformat() if run.started_at else None,
+            "finished_at": as_aware(run.finished_at).isoformat() if run.finished_at else None,
             "current_item": run.current_item,
             "stats": run.stats or {},
             "error": run.error,
         },
         "nodes": nodes,
         "log": (run.log or [])[-60:],
+        **schedule,
     }
 
 
