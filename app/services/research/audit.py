@@ -56,6 +56,8 @@ TECH_PATTERNS: dict[str, tuple[str, ...]] = {
     "flash": (".swf", "application/x-shockwave-flash"),
     "google_analytics_legacy": ("ga.js", "analytics.js"),
     "google_analytics_4": ("gtag/js", "googletagmanager.com/gtag"),
+    "google_tag_manager": ("googletagmanager.com/gtm.js",),
+    "facebook_pixel": ("connect.facebook.net", "fbq("),
 }
 
 JQUERY_VERSION_RE = re.compile(r"jquery[-.]?(\d+)\.(\d+)(?:\.(\d+))?(?:\.min)?\.js", re.I)

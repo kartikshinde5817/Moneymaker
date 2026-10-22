@@ -66,6 +66,10 @@ INTENT = {
         '"looking for AI automation"', '"need workflow automation"',
         '"looking for an automation partner"',
     ],
+    "digital_marketing": [
+        '"looking for a digital marketing agency"', '"looking for an SEO agency"',
+        '"looking for a social media manager"', '"recommend a marketing agency"',
+    ],
 }
 
 COUNTRY_GL = {

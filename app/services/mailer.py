@@ -97,7 +97,7 @@ def validate_address(email: str, *, check_mx: bool = True) -> tuple[bool, str]:
 
 def sent_recently(
     db: Session, company_id: int, days: int | None = None,
-    exclude_message_id: int | None = None,
+    exclude_message_id: int | None = None, owner_id: int | None = None,
 ) -> bool:
     """Cooling-off. Being found by three sources must not mean three emails.
 
@@ -115,18 +115,23 @@ def sent_recently(
             EmailMessage.created_at >= cutoff,
         )
     )
+    if owner_id is not None:
+        # Cooling-off is per customer: another customer's email is not ours.
+        q = q.where(EmailMessage.owner_id == owner_id)
     if exclude_message_id is not None:
         q = q.where(EmailMessage.id != exclude_message_id)
     return db.execute(q).scalar_one() > 0
 
 
-def sent_today(db: Session, mailbox_id: int | None = None) -> int:
+def sent_today(db: Session, mailbox_id: int | None = None, owner_id: int | None = None) -> int:
     start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     q = select(func.count(EmailMessage.id)).where(
         EmailMessage.status == "sent", EmailMessage.sent_at >= start
     )
     if mailbox_id:
         q = q.where(EmailMessage.mailbox_id == mailbox_id)
+    if owner_id is not None:
+        q = q.where(EmailMessage.owner_id == owner_id)
     return db.execute(q).scalar_one()
 
 
@@ -151,21 +156,25 @@ def check_can_send(
     db: Session, lead: Lead, company: Company, contact: Contact | None,
     exclude_message_id: int | None = None,
 ) -> SendGate:
-    """Every gate, in one place. The dispatcher calls only this."""
+    """Every reason this email must never go out, judged for the customer who
+    owns the lead: their unsubscribe list and their cooling-off history.
+
+    The daily limit is not here - being over it only means "not today", so
+    send_message keeps such an email queued instead of rejecting it.
+    """
+    owner = lead.owner_id
     if not contact or not contact.email:
         return SendGate(False, "no email address on file")
     if company.email_policy != ALLOWED:
         return SendGate(False, f"country policy for {company.country} is '{company.email_policy}'")
-    reason = is_suppressed(db, contact.email)
+    reason = is_suppressed(db, contact.email, owner)
     if reason:
         return SendGate(False, f"suppressed: {reason}")
     ok, why = validate_address(contact.email)
     if not ok:
         return SendGate(False, why)
-    if sent_recently(db, company.id, exclude_message_id=exclude_message_id):
+    if sent_recently(db, company.id, exclude_message_id=exclude_message_id, owner_id=owner):
         return SendGate(False, f"already contacted within {settings.cooling_off_days} days")
-    if sent_today(db) >= settings.daily_email_cap_global:
-        return SendGate(False, "global daily send cap reached")
     return SendGate(True, "ok")
 
 
@@ -178,7 +187,11 @@ def new_unsubscribe_token() -> str:
     return secrets.token_urlsafe(24)
 
 
-def sender_profile() -> dict:
+def sender_profile(db: Session | None = None, owner_id: int | None = None) -> dict:
+    """The sending identity for a customer (or, with no customer, the env's)."""
+    if db is not None and owner_id is not None:
+        from app.services.tenant import config_for
+        return config_for(db, owner_id).sender()
     return {
         "sender_name": settings.sender_name or "",
         "sender_email": settings.sender_email or "",
@@ -253,10 +266,14 @@ class SMTPProvider:
         # no credentials, and send() only logs in when a user is configured.
         return bool(settings.smtp_host)
 
-    def send(self, msg: MIMEMultipart, to_email: str, from_email: str) -> str:
-        host, port = settings.smtp_host, settings.smtp_port
+    def send(self, msg: MIMEMultipart, to_email: str, from_email: str, cfg=None) -> str:
+        host = cfg.smtp_host if cfg else settings.smtp_host
+        port = cfg.smtp_port if cfg else settings.smtp_port
+        use_ssl = cfg.smtp_use_ssl if cfg else settings.smtp_use_ssl
+        user = cfg.smtp_user if cfg else settings.smtp_user
+        password = cfg.smtp_pass if cfg else settings.smtp_pass
         try:
-            if settings.smtp_use_ssl or port == 465:
+            if use_ssl or port == 465:
                 server = smtplib.SMTP_SSL(host, port, timeout=30)
             else:
                 server = smtplib.SMTP(host, port, timeout=30)
@@ -264,15 +281,15 @@ class SMTPProvider:
                 if server.has_extn("starttls"):
                     server.starttls()
                     server.ehlo()
-                elif settings.smtp_user:
+                elif user:
                     # Never hand credentials to a server that cannot encrypt.
                     raise RuntimeError(
                         f"{host}:{port} does not support STARTTLS; refusing to "
                         f"send credentials in clear text"
                     )
             with server:
-                if settings.smtp_user:
-                    server.login(settings.smtp_user, settings.smtp_pass)
+                if user:
+                    server.login(user, password)
                 server.sendmail(from_email, [to_email], msg.as_string())
         except (smtplib.SMTPException, socket.error, OSError) as exc:
             raise RuntimeError(f"SMTP send failed: {type(exc).__name__}: {exc}") from exc
@@ -281,19 +298,60 @@ class SMTPProvider:
 
 PROVIDERS = {"smtp": SMTPProvider()}
 
+UNREACHABLE_HINT = (
+    "This server could not reach the mail server, so nothing was sent. The email "
+    "is approved and waiting in the queue. On Render's free plan email ports are "
+    "blocked: set SEND_ON_SERVER=false there and run `python run.py --send-only` "
+    "on your computer."
+)
+
+
+def _never_reached_server(exc: Exception) -> bool:
+    """True when the connection itself failed, so the email certainly was not sent.
+
+    Errors from a mail server that was reached (wrong password, refused
+    recipient) are real failures. A dropped connection mid-send is not
+    counted here, since the message might already have been accepted.
+    """
+    cause = exc.__cause__ or exc
+    if isinstance(cause, smtplib.SMTPServerDisconnected):
+        return False
+    return isinstance(cause, (ConnectionError, TimeoutError, socket.gaierror,
+                              smtplib.SMTPConnectError)) or type(cause) is OSError
+
 
 def active_provider():
     p = PROVIDERS["smtp"]
     return p if p.available() else None
 
 
-def provider_ready() -> bool:
+def provider_ready(cfg=None) -> bool:
+    if cfg is not None:
+        return cfg.smtp_ready
     return active_provider() is not None
 
 
 # ---------------------------------------------------------------------------
 # Sending
 # ---------------------------------------------------------------------------
+
+
+def mailbox_for(db: Session, owner_id: int, cfg) -> Mailbox | None:
+    """The customer's sending mailbox, created on first use so warm-up applies."""
+    box = db.execute(
+        select(Mailbox).where(Mailbox.owner_id == owner_id, Mailbox.enabled.is_(True))
+        .order_by(Mailbox.last_sent_at.asc())
+    ).scalars().first()
+    if box or not cfg.sender_email:
+        return box
+    taken = db.execute(select(Mailbox).where(Mailbox.address == cfg.sender_email.lower())).scalar_one_or_none()
+    if taken:
+        return None if taken.owner_id != owner_id else taken
+    box = Mailbox(owner_id=owner_id, address=cfg.sender_email.lower(),
+                  display_name=cfg.sender_name or "", daily_cap=cfg.daily_cap)
+    db.add(box)
+    db.flush()
+    return box
 
 
 def record_event(db: Session, message: EmailMessage, kind: str, payload: dict | None = None) -> None:
@@ -315,19 +373,23 @@ def send_message(db: Session, message: EmailMessage) -> tuple[bool, str]:
         record_event(db, message, "failed", {"reason": gate.reason})
         return False, gate.reason
 
-    provider = active_provider()
-    if provider is None:
-        message.failure_reason = "no email provider configured"
+    from app.services.tenant import config_for
+
+    owner = message.owner_id or lead.owner_id
+    cfg = config_for(db, owner)
+    provider = PROVIDERS["smtp"]
+    if not cfg.smtp_ready:
+        message.failure_reason = "no mailbox connected - add your SMTP details in Settings"
         record_event(db, message, "failed", {"reason": message.failure_reason})
         return False, message.failure_reason
 
-    sender = sender_profile()
+    sender = cfg.sender()
     if not sender.get("sender_email"):
-        message.failure_reason = "SENDER_EMAIL is not configured"
+        message.failure_reason = "Sender email is not set - add it in Settings"
         return False, message.failure_reason
     if not sender.get("company_postal_address"):
         # CAN-SPAM requires this. Refuse rather than send unlawfully.
-        message.failure_reason = "COMPANY_POSTAL_ADDRESS is required before sending"
+        message.failure_reason = "A postal address is required before sending - add it in Settings"
         return False, message.failure_reason
     if not public_url_is_reachable():
         # Every message carries an unsubscribe link built from PUBLIC_BASE_URL.
@@ -340,30 +402,41 @@ def send_message(db: Session, message: EmailMessage) -> tuple[bool, str]:
         )
         return False, message.failure_reason
 
+    if sent_today(db, owner_id=owner) >= cfg.daily_cap:
+        message.status = "queued"
+        return False, f"Daily sending limit of {cfg.daily_cap} reached - it will go out tomorrow."
+
     if not message.unsubscribe_token:
         message.unsubscribe_token = new_unsubscribe_token()
 
-    mailbox = db.execute(
-        select(Mailbox).where(Mailbox.enabled.is_(True)).order_by(Mailbox.last_sent_at.asc())
-    ).scalars().first()
+    mailbox = mailbox_for(db, owner, cfg)
     if mailbox:
         cap = warmup_cap(mailbox)
         if sent_today(db, mailbox.id) >= cap:
-            return False, f"mailbox {mailbox.address} reached its daily cap of {cap}"
+            message.status = "queued"
+            return False, (f"{mailbox.address} is warming up and has reached today's limit of "
+                           f"{cap} - it will go out tomorrow.")
         message.mailbox_id = mailbox.id
 
     message.status = "sending"
     db.flush()
     try:
         mime = compose(message, sender)
-        provider_id = provider.send(mime, message.to_email, sender["sender_email"])
+        provider_id = provider.send(mime, message.to_email, sender["sender_email"], cfg)
     except Exception as exc:  # noqa: BLE001
+        if _never_reached_server(exc):
+            # Nothing left this server, so the approval stands: keep it queued
+            # for the next attempt (or for the PC sender) instead of failing it.
+            message.status = "queued"
+            message.failure_reason = f"Could not reach the mail server: {exc}"[:500]
+            return False, UNREACHABLE_HINT
         message.status = "failed"
         message.failure_reason = str(exc)[:500]
         record_event(db, message, "failed", {"reason": message.failure_reason})
         low = str(exc).lower()
         # A hard rejection means the address is dead - never try it again.
         if any(k in low for k in ("550", "no such user", "does not exist", "unknown recipient")):
+            # Dead for everyone, so platform-wide.
             suppress(db, message.to_email, "hard bounce at send time")
         return False, message.failure_reason
 

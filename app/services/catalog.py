@@ -26,6 +26,7 @@ BUILTIN: dict[str, str] = {
     "computer_vision": "Computer Vision / OpenCV",
     "ai_agent": "AI Agents",
     "ai_automation": "AI Automation",
+    "digital_marketing": "Digital Marketing",
 }
 
 KEY_MAX = 32  # width of the service_category columns on leads and campaigns

@@ -169,6 +169,10 @@ class RunLogger:
         self.db.flush()
 
 
+class NoAccess(Exception):
+    """The campaign's owner no longer has a trial or subscription for its bot."""
+
+
 class RunCancelled(Exception):
     """Raised at a safe point after the user asks a running campaign to stop."""
 
@@ -221,7 +225,8 @@ def close_dead_runs(db: Session, reason: str, campaign_id: int | None = None) ->
 
 def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") -> CampaignRun:
     clear_stop(campaign.id)
-    run = CampaignRun(campaign_id=campaign.id, trigger=trigger, status="running")
+    run = CampaignRun(campaign_id=campaign.id, owner_id=campaign.owner_id,
+                      trigger=trigger, status="running")
     db.add(run)
     # Committed straight away: the dashboard reads through its own connection
     # and cannot see an uncommitted row, and a rollback on the first prospect
@@ -237,7 +242,12 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
         "whatsapp_queued": 0, "discarded_no_contact": 0,
     }
 
+    from app.services import billing, tenant
+
+    owner_is_admin = tenant.is_admin(db, campaign.owner_id)
     try:
+        if not billing.has_access(db, campaign.owner_id, campaign.service_category):
+            raise NoAccess()
         emit(f"Campaign '{campaign.name}' starting — service={campaign.service_category}")
         track.start("trigger", f"{trigger} · {campaign.service_category}")
         track.done("trigger", passed=1, detail=f"{trigger} start")
@@ -262,7 +272,7 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
 
         run.status = "completed"
         track.finish()
-        if notify.ready():
+        if notify.ready() and owner_is_admin:
             notify.run_summary(
                 campaign=campaign.name, stats=stats,
                 drafted=stats["drafted"], sent=stats["sent"], failed=stats["errors"],
@@ -272,6 +282,10 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
             f"{stats['queued']} queued, {stats['rejected']} rejected, "
             f"{stats['duplicates']} duplicates skipped."
         )
+    except NoAccess:
+        run.status = "cancelled"
+        track.finish()
+        emit("Not run: your access to this bot has ended. Renew it under My bots to continue.")
     except RunCancelled:
         run.status = "cancelled"
         track.finish()
@@ -282,7 +296,7 @@ def run_campaign(db: Session, campaign: Campaign, *, trigger: str = "manual") ->
     except Exception as exc:  # noqa: BLE001
         run.status = "failed"
         track.fail("trigger", str(exc)[:160])
-        if notify.ready():
+        if notify.ready() and owner_is_admin:
             notify.failure_alert(campaign.name, f"{type(exc).__name__}: {exc}")
         run.current_item = None
         run.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[:2000]}"
@@ -367,6 +381,7 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
     # One lead per company per service, ever. Re-discovery updates, never duplicates.
     existing = db.execute(
         select(Lead).where(
+            Lead.owner_id == campaign.owner_id,
             Lead.company_id == company.id,
             Lead.service_category == campaign.service_category,
         )
@@ -464,7 +479,7 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
                detail=f"{len(signals)} signals for {company.name}")
 
     lead = existing or Lead(
-        company_id=company.id, campaign_id=campaign.id,
+        owner_id=campaign.owner_id, company_id=company.id, campaign_id=campaign.id,
         service_category=campaign.service_category, source_kind=prospect.source_kind,
     )
     lead.contact_id = contact.id if contact else None
@@ -506,7 +521,7 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
 
     # --- scoring ----------------------------------------------------------
     track.start("scoring", company.name)
-    suppressed = bool(contact and is_suppressed(db, contact.email))
+    suppressed = bool(contact and is_suppressed(db, contact.email, campaign.owner_id))
     result = scoring.score_lead(
         company=company, signals=signals, contact=contact,
         service_category=campaign.service_category, suppressed=suppressed,
@@ -545,9 +560,8 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
         return
 
     track.start("personalize", company.name)
-    draft = ai.draft_email(
-        company, signals, contact, campaign.service_category, mailer.sender_profile()
-    )
+    sender = mailer.sender_profile(db, campaign.owner_id)
+    draft = ai.draft_email(company, signals, contact, campaign.service_category, sender)
     usage = draft.pop("_usage", {})
     stats["ai_cost_usd"] += usage.get("cost_usd", 0.0)
     db.add(AIAnalysis(
@@ -560,7 +574,7 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
 
     auto = campaign.approval_mode == "auto"
     message = EmailMessage(
-        lead_id=lead.id, contact_id=contact.id, to_email=contact.email,
+        owner_id=campaign.owner_id, lead_id=lead.id, contact_id=contact.id, to_email=contact.email,
         subject=draft["subject"], body=draft["body"],
         cited_signal_ids=draft.get("cited_signal_ids", []),
         unsubscribe_token=mailer.new_unsubscribe_token(),
@@ -580,7 +594,7 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
     # A phone number means a second channel. Prepared, never auto-sent - see
     # services/whatsapp.py for why that is not optional.
     if settings.whatsapp_enabled and company.phone:
-        wa = whatsapp.queue(db, lead, company, signals, mailer.sender_profile())
+        wa = whatsapp.queue(db, lead, company, signals, sender)
         if wa:
             stats["whatsapp_queued"] = stats.get("whatsapp_queued", 0) + 1
             emit(f"    WhatsApp message prepared for {wa.phone_e164}")
@@ -606,27 +620,27 @@ def _audit_columns(audit) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def dispatch_queue(db: Session, limit: int = 25) -> dict:
-    """Send queued messages, respecting every cap. Safe to call on a timer."""
+def dispatch_queue(db: Session, limit: int = 25, owner_id: int | None = None) -> dict:
+    """Send queued messages - every customer's, or one customer's - respecting
+    each customer's own mailbox and daily limit. Safe to call on a timer."""
     result = {"sent": 0, "failed": 0, "skipped": 0, "details": []}
-    if not mailer.provider_ready():
-        result["details"].append("no SMTP provider configured")
-        return result
+    stmt = select(EmailMessage).where(EmailMessage.status == "queued")
+    if owner_id is not None:
+        stmt = stmt.where(EmailMessage.owner_id == owner_id)
+    messages = db.execute(stmt.order_by(EmailMessage.scheduled_for.asc()).limit(limit)).scalars().all()
 
-    messages = db.execute(
-        select(EmailMessage)
-        .where(EmailMessage.status == "queued")
-        .order_by(EmailMessage.scheduled_for.asc())
-        .limit(limit)
-    ).scalars().all()
-
+    # A customer whose limit is reached or whose mail server cannot be
+    # reached is skipped for the rest of this pass; the others carry on.
+    paused: set[int | None] = set()
     for message in messages:
-        if mailer.sent_today(db) >= settings.daily_email_cap_global:
-            result["details"].append("global daily cap reached")
-            break
+        if message.owner_id in paused:
+            continue
         sent, detail = mailer.send_message(db, message)
         if sent:
             result["sent"] += 1
+        elif message.status == "queued":
+            paused.add(message.owner_id)
+            result["details"].append(detail)
         elif message.status == "rejected":
             result["skipped"] += 1
             result["details"].append(f"{message.to_email}: {detail}")

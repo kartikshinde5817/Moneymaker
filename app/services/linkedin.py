@@ -86,7 +86,7 @@ def angle_for(signals: list[Signal]) -> tuple[str, str]:
     return "No specific angle on file — read their page first.", ""
 
 
-def queue(db: Session, *, only_unemailable: bool = False, limit: int = 100) -> list[dict]:
+def queue(db: Session, *, owner_id: int, only_unemailable: bool = False, limit: int = 100) -> list[dict]:
     """Leads worth approaching by hand on LinkedIn.
 
     `only_unemailable` narrows it to the ones where LinkedIn is the only
@@ -95,7 +95,7 @@ def queue(db: Session, *, only_unemailable: bool = False, limit: int = 100) -> l
     stmt = (
         select(Lead, Company)
         .join(Company, Company.id == Lead.company_id)
-        .where(Lead.stage.notin_(("rejected", "closed")))
+        .where(Lead.owner_id == owner_id, Lead.stage.notin_(("rejected", "closed")))
     )
     if only_unemailable:
         stmt = stmt.where(
@@ -140,18 +140,20 @@ def queue(db: Session, *, only_unemailable: bool = False, limit: int = 100) -> l
     return out
 
 
-def stats(db: Session) -> dict:
+def stats(db: Session, owner_id: int) -> dict:
+    mine = Lead.owner_id == owner_id
     total = (
-        select(func.count(Company.id)).where(Company.linkedin_url.isnot(None))
+        select(func.count(Lead.id)).join(Company, Company.id == Lead.company_id)
+        .where(mine, Company.linkedin_url.isnot(None))
     ).scalar_subquery()
     blocked = (
         select(func.count(Lead.id))
         .join(Company, Company.id == Lead.company_id)
-        .where(Company.email_policy != ALLOWED, Lead.stage.notin_(("rejected", "closed")))
+        .where(mine, Company.email_policy != ALLOWED, Lead.stage.notin_(("rejected", "closed")))
     ).scalar_subquery()
     no_email = (
         select(func.count(Lead.id))
-        .where(Lead.contact_id.is_(None), Lead.stage.notin_(("rejected", "closed")))
+        .where(mine, Lead.contact_id.is_(None), Lead.stage.notin_(("rejected", "closed")))
     ).scalar_subquery()
     total, blocked, no_email = db.execute(select(total, blocked, no_email)).one()
     return {"with_linkedin_url": total, "email_blocked_country": blocked,

@@ -60,6 +60,10 @@ PLACES_QUERIES = {
         "accounting firm", "logistics company", "wholesale distributor",
         "marketing agency", "healthcare clinic",
     ],
+    "digital_marketing": [
+        "restaurant", "dental clinic", "beauty salon", "gym", "estate agent",
+        "law firm", "hotel", "car dealership",
+    ],
 }
 
 COUNTRY_REGION = {"GB": "gb", "US": "us", "AE": "ae", "IE": "ie"}
@@ -186,6 +190,9 @@ CH_SIC = {
     ],
     "ai_agent": ["62012", "62020", "65120", "66220", "68320", "79120", "82200"],
     "ai_automation": ["69201", "70229", "73110", "52290", "46900"],
+    # New consumer-facing businesses: restaurants, hotels, retail, beauty,
+    # dental, gyms, estate agents - the ones that need customers from day one.
+    "digital_marketing": ["56101", "55100", "47190", "96020", "86230", "93130", "68310", "47710"],
 }
 
 
@@ -294,7 +301,7 @@ class AdzunaSource:
     label = "Adzuna job ads (hiring signals)"
     needs_key = True
     countries = ["GB", "US", "AE", "IE"]
-    services = ["computer_vision", "ai_agent", "ai_automation", "web_development"]
+    services = ["computer_vision", "ai_agent", "ai_automation", "web_development", "digital_marketing"]
 
     def available(self) -> bool:
         return bool(settings.adzuna_app_id and settings.adzuna_app_key)
@@ -385,7 +392,7 @@ class HackerNewsSource:
     label = "Hacker News (public requirement posts)"
     needs_key = False
     countries = ["GB", "US", "AE", "IE"]
-    services = ["computer_vision", "ai_agent", "ai_automation", "web_development"]
+    services = ["computer_vision", "ai_agent", "ai_automation", "web_development", "digital_marketing"]
 
     def available(self) -> bool:
         return True
@@ -458,6 +465,7 @@ OSM_TERMS = {
     "computer_vision": ["factory", "warehouse", "industrial", "manufacturing"],
     "ai_agent": ["software company", "insurance", "travel agency"],
     "ai_automation": ["accountant", "logistics", "wholesale"],
+    "digital_marketing": ["restaurant", "dentist", "hairdresser", "gym", "estate agent"],
 }
 
 

@@ -57,12 +57,27 @@ TS = DateTime(timezone=True)
 # ---------------------------------------------------------------------------
 
 
+# Columns added after the first release carry a server_default (or are
+# nullable) so the startup migration can add them to a table that already
+# has rows.
+OWNER_FK = "users.id"
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
-    role: Mapped[str] = mapped_column(String(32), default="admin")
+    # admin runs the platform; customer buys bots and uses them on its own data
+    role: Mapped[str] = mapped_column(String(32), default="customer")
+    name: Mapped[str | None] = mapped_column(String(160))
+    company: Mapped[str | None] = mapped_column(String(160))
+    # active | suspended
+    status: Mapped[str] = mapped_column(String(16), default="active", server_default="active")
+    # The one free trial each account gets: which bot, and when it started.
+    trial_bot: Mapped[str | None] = mapped_column(String(32))
+    trial_started_at: Mapped[dt.datetime | None] = mapped_column(TS)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(TS)
     # Google Authenticator (TOTP). Set once the QR code has been scanned and
     # confirmed; until then the account is password-only.
     totp_secret: Mapped[str | None] = mapped_column(String(64))
@@ -80,6 +95,99 @@ class Session(Base):
     created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
     expires_at: Mapped[dt.datetime] = mapped_column(TS)
     last_seen_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+
+
+class AccountSettings(Base):
+    """Each customer's own sending identity and mailbox.
+
+    Passwords are stored encrypted (see services/tenant.py). For the admin
+    account, empty fields fall back to the values in the environment, which
+    is how the app was configured before it had customers.
+    """
+
+    __tablename__ = "account_settings"
+    owner_id: Mapped[int] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), primary_key=True)
+    sender_name: Mapped[str | None] = mapped_column(String(160))
+    sender_email: Mapped[str | None] = mapped_column(String(320))
+    company_name: Mapped[str | None] = mapped_column(String(160))
+    company_website: Mapped[str | None] = mapped_column(String(512))
+    postal_address: Mapped[str | None] = mapped_column(Text)
+    privacy_url: Mapped[str | None] = mapped_column(String(512))
+    smtp_host: Mapped[str | None] = mapped_column(String(255))
+    smtp_port: Mapped[int | None] = mapped_column(Integer)
+    smtp_use_ssl: Mapped[bool | None] = mapped_column(Boolean)
+    smtp_user: Mapped[str | None] = mapped_column(String(320))
+    smtp_pass_enc: Mapped[str | None] = mapped_column(Text)
+    imap_host: Mapped[str | None] = mapped_column(String(255))
+    imap_port: Mapped[int | None] = mapped_column(Integer)
+    imap_user: Mapped[str | None] = mapped_column(String(320))
+    imap_pass_enc: Mapped[str | None] = mapped_column(Text)
+    imap_folder: Mapped[str | None] = mapped_column(String(120))
+    daily_cap: Mapped[int | None] = mapped_column(Integer)
+    timezone: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow, onupdate=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Product: bots, subscriptions, payments
+# ---------------------------------------------------------------------------
+
+
+class Bot(Base):
+    """A bot customers can subscribe to. One per service the platform sells."""
+
+    __tablename__ = "bots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(32), unique=True)  # = service_category
+    name: Mapped[str] = mapped_column(String(80))
+    tagline: Mapped[str] = mapped_column(String(200), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    features: Mapped[list] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    sort_order: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    # Whole rupees / dollars. Razorpay wants the smallest unit, so x100 at checkout.
+    price_inr_month: Mapped[int] = mapped_column(Integer, default=1999)
+    price_inr_year: Mapped[int] = mapped_column(Integer, default=19999)
+    price_usd_month: Mapped[int] = mapped_column(Integer, default=29)
+    price_usd_year: Mapped[int] = mapped_column(Integer, default=290)
+    created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+
+
+class Subscription(Base):
+    """A period of access to one bot. Access = any row whose window covers now."""
+
+    __tablename__ = "subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
+    bot_key: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # trial | paid | grant
+    period: Mapped[str] = mapped_column(String(8))  # day | month | year | custom
+    currency: Mapped[str | None] = mapped_column(String(3))
+    amount: Mapped[int] = mapped_column(Integer, default=0)  # smallest unit
+    starts_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+    expires_at: Mapped[dt.datetime] = mapped_column(TS, index=True)
+    payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"))
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(TS)
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
+    bot_key: Mapped[str] = mapped_column(String(32))
+    period: Mapped[str] = mapped_column(String(8))  # month | year
+    currency: Mapped[str] = mapped_column(String(3))
+    amount: Mapped[int] = mapped_column(Integer)  # smallest unit (paise / cents)
+    provider: Mapped[str] = mapped_column(String(16), default="razorpay")
+    order_id: Mapped[str] = mapped_column(String(64), unique=True)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # created | paid | failed
+    status: Mapped[str] = mapped_column(String(16), default="created", index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow, index=True)
+    paid_at: Mapped[dt.datetime | None] = mapped_column(TS)
 
 
 class Setting(Base):
@@ -276,6 +384,7 @@ class Service(Base):
 class Campaign(Base):
     __tablename__ = "campaigns"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(160))
     # web_development | computer_vision | ai_agent | ai_automation
     service_category: Mapped[str] = mapped_column(String(32))
@@ -300,6 +409,7 @@ class Campaign(Base):
 class CampaignRun(Base):
     __tablename__ = "campaign_runs"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"))
     started_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
     finished_at: Mapped[dt.datetime | None] = mapped_column(TS)
@@ -328,11 +438,15 @@ class SearchQuery(Base):
 class Lead(Base):
     __tablename__ = "leads"
     __table_args__ = (
-        UniqueConstraint("company_id", "service_category", name="uq_lead_company_service"),
+        # One lead per company per service *per customer*: two customers may
+        # both prospect the same business.
+        UniqueConstraint("owner_id", "company_id", "service_category",
+                         name="uq_lead_owner_company_service"),
         Index("ix_lead_status_action", "status", "next_action_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     company_id: Mapped[int] = mapped_column(
         ForeignKey("companies.id", ondelete="CASCADE"), index=True
     )
@@ -380,6 +494,7 @@ class AIAnalysis(Base):
 class Mailbox(Base):
     __tablename__ = "mailboxes"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     address: Mapped[str] = mapped_column(String(320), unique=True)
     display_name: Mapped[str] = mapped_column(String(160), default="")
     provider: Mapped[str] = mapped_column(String(16), default="smtp")
@@ -399,6 +514,7 @@ class EmailMessage(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), index=True)
     contact_id: Mapped[int | None] = mapped_column(ForeignKey("contacts.id"))
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     mailbox_id: Mapped[int | None] = mapped_column(ForeignKey("mailboxes.id"))
     to_email: Mapped[str] = mapped_column(String(320))
     subject: Mapped[str] = mapped_column(Text)
@@ -441,6 +557,7 @@ class WhatsAppMessage(Base):
 
     __tablename__ = "whatsapp_messages"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), index=True)
     phone_e164: Mapped[str] = mapped_column(String(32))
     body: Mapped[str] = mapped_column(Text)
@@ -463,8 +580,11 @@ class AppState(Base):
 
 class Suppression(Base):
     __tablename__ = "suppressions"
-    __table_args__ = (UniqueConstraint("scope", "value", name="uq_suppression"),)
+    __table_args__ = (UniqueConstraint("owner_id", "scope", "value", name="uq_suppression_owner"),)
     id: Mapped[int] = mapped_column(primary_key=True)
+    # The customer whose list this is. NULL = platform-wide (hard bounces:
+    # an address that does not exist is dead for everyone).
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey(OWNER_FK, ondelete="CASCADE"), index=True)
     scope: Mapped[str] = mapped_column(String(8), default="email")  # email | domain
     value: Mapped[str] = mapped_column(String(320), index=True)
     reason: Mapped[str] = mapped_column(String(160), default="")

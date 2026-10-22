@@ -50,6 +50,12 @@ RULES: dict[str, Rule] = {r.code: r for r in [
     Rule("slow_site", 5, "Slow first-byte time"),
     Rule("weak_contact_route", 4, "No contact form"),
 
+    # Marketing gaps on their own website (Digital Marketing bot).
+    Rule("no_analytics", 12, "No website analytics"),
+    Rule("no_social_profiles", 10, "No social media profiles linked"),
+    Rule("missing_meta_description", 10, "No search-result description"),
+    Rule("weak_page_title", 8, "Weak or generic page title"),
+
     # Fit and reachability.
     Rule("industry_match", 15, "Industry matches our target list"),
     Rule("recently_incorporated", 12, "Incorporated within 12 months"),
@@ -72,6 +78,7 @@ RULES: dict[str, Rule] = {r.code: r for r in [
 # still one outdated site, not 36 points of evidence.
 CAPPED_ONCE = {
     "outdated_tech", "missing_booking", "no_ssl", "stale_content",
+    "no_analytics", "no_social_profiles", "missing_meta_description", "weak_page_title",
     "not_mobile_friendly", "weak_contact_route", "slow_site",
 }
 
@@ -99,7 +106,15 @@ TARGET_INDUSTRY_HINTS = {
         "accounting", "logistic", "wholesale", "marketing", "clinic",
         "professional services", "consult",
     ),
+    "digital_marketing": (
+        "restaurant", "cafe", "hotel", "salon", "gym", "clinic", "dental",
+        "retail", "shop", "estate", "law", "travel", "newly incorporated",
+    ),
 }
+
+# Website gaps that matter to more than one service: a business with no
+# website at all needs marketing as much as it needs a site.
+SHARED_GAPS = {"no_website", "parked_domain", "placeholder_site"}
 
 
 @dataclass
@@ -142,7 +157,8 @@ def score_lead(
         if code in CAPPED_ONCE and code in used:
             continue
         # A gap signal only counts toward the service it belongs to.
-        if sig.service_category and sig.service_category != service_category:
+        if (sig.service_category and sig.service_category != service_category
+                and not (code in SHARED_GAPS and service_category == "digital_marketing")):
             continue
         used.add(code)
         hits.append(_hit(code, sig.quote or "", sig.id))

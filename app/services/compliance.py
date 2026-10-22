@@ -111,42 +111,48 @@ def is_disposable(email: str) -> bool:
     return email.split("@", 1)[-1].lower() in DISPOSABLE_DOMAINS
 
 
-def is_suppressed(db: Session, email: str) -> str | None:
-    """Return the suppression reason, or None. Checked before every send."""
+def is_suppressed(db: Session, email: str, owner_id: int | None = None) -> str | None:
+    """Return the suppression reason, or None. Checked before every send.
+
+    A customer's own list applies to them; platform-wide rows (owner NULL,
+    e.g. addresses that hard-bounced) apply to everyone.
+    """
     email = (email or "").strip().lower()
     if not email or "@" not in email:
         return "invalid address"
     domain = email.split("@", 1)[1]
+    whose = Suppression.owner_id.is_(None)
+    if owner_id is not None:
+        whose = whose | (Suppression.owner_id == owner_id)
     row = db.execute(
         select(Suppression).where(
-            Suppression.scope == "email", Suppression.value == email
-        )
-    ).scalar_one_or_none()
+            whose,
+            ((Suppression.scope == "email") & (Suppression.value == email))
+            | ((Suppression.scope == "domain") & (Suppression.value == domain)),
+        ).order_by(Suppression.scope.desc())
+    ).scalars().first()
     if row:
-        return row.reason or "on suppression list"
-    row = db.execute(
-        select(Suppression).where(
-            Suppression.scope == "domain", Suppression.value == domain
-        )
-    ).scalar_one_or_none()
-    if row:
-        return row.reason or "domain suppressed"
+        return row.reason or ("domain suppressed" if row.scope == "domain" else "on suppression list")
     return None
 
 
-def suppress(db: Session, value: str, reason: str, scope: str = "email") -> None:
-    """Idempotent. Unsubscribes and hard bounces are permanent."""
+def suppress(db: Session, value: str, reason: str, scope: str = "email",
+             owner_id: int | None = None) -> None:
+    """Idempotent. Unsubscribes and hard bounces are permanent.
+
+    owner_id None makes it platform-wide - only for addresses that are dead
+    for everyone, such as a hard bounce.
+    """
     value = (value or "").strip().lower()
     if not value:
         return
+    whose = Suppression.owner_id.is_(None) if owner_id is None else Suppression.owner_id == owner_id
     exists = db.execute(
-        select(Suppression).where(
-            Suppression.scope == scope, Suppression.value == value
-        )
-    ).scalar_one_or_none()
+        select(Suppression).where(whose, Suppression.scope == scope, Suppression.value == value)
+    ).scalars().first()
     if exists:
         return
-    db.add(Suppression(scope=scope, value=value, reason=reason[:160]))
+    db.add(Suppression(scope=scope, value=value, reason=reason[:160], owner_id=owner_id))
     db.flush()
 
 

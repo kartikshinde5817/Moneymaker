@@ -16,3 +16,4 @@ pyjwt>=2.8
 pyotp>=2.9
 qrcode[pil]>=7.4
 psycopg[binary]>=3.2
+cryptography>=42

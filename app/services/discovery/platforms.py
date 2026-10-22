@@ -69,6 +69,11 @@ INTENT_PHRASES = {
         '"looking for AI automation"', '"need workflow automation" consultant',
         '"request for proposal" "process automation"',
     ],
+    "digital_marketing": [
+        '"looking for a digital marketing agency"', '"need help with SEO"',
+        '"looking for a social media manager"', '"looking for a marketing agency"',
+        '"request for proposal" "digital marketing"', '"need more leads" "marketing"',
+    ],
 }
 
 COUNTRY_GL = {"GB": ("uk", "en"), "US": ("us", "en"), "IE": ("ie", "en"), "AE": ("ae", "en")}

@@ -41,38 +41,70 @@ ADMIN_EMAIL = "admin@local"
 _hasher = PasswordHasher()
 
 
-def _get_or_create_admin(db: DBSession) -> User:
-    """The single admin account, created from ADMIN_PASSWORD on first use.
+def hash_password(password: str) -> str:
+    return _hasher.hash(password)
 
-    If ADMIN_PASSWORD changes in .env, the stored hash is refreshed to match -
-    the environment variable is the source of truth, not the database.
-    """
-    user = db.execute(select(User).where(User.email == ADMIN_EMAIL)).scalar_one_or_none()
-    if user is None:
-        user = User(email=ADMIN_EMAIL, password_hash=_hasher.hash(settings.admin_password))
-        db.add(user)
-        db.flush()
-        return user
+
+def verify_password(password_hash: str, password: str) -> bool:
     try:
-        _hasher.verify(user.password_hash, settings.admin_password)
-    except VerifyMismatchError:
-        # .env was edited since the hash was stored - follow it.
-        user.password_hash = _hasher.hash(settings.admin_password)
-        db.flush()
+        return _hasher.verify(password_hash, password)
+    except (VerifyMismatchError, Exception):  # noqa: BLE001 - malformed hash = no match
+        return False
+
+
+def admin_user(db: DBSession) -> User:
+    """The platform owner. ADMIN_EMAIL / ADMIN_PASSWORD in the environment are
+    the source of truth: editing them changes the admin login on next use."""
+    user = db.execute(
+        select(User).where(User.role == "admin").order_by(User.id)
+    ).scalars().first()
+    if user is None:
+        from app.db import ensure_admin_row
+        ensure_admin_row(db.connection())
+        user = db.execute(select(User).where(User.role == "admin").order_by(User.id)).scalars().first()
+    email = (settings.admin_email or "").strip().lower()
+    if email and user.email != email:
+        taken = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if taken is None:
+            user.email = email
+    if settings.admin_password and not verify_password(user.password_hash, settings.admin_password):
+        user.password_hash = hash_password(settings.admin_password)
+    db.flush()
     return user
+
+
+# Kept for older call sites.
+_get_or_create_admin = admin_user
 
 
 def login_required() -> bool:
     return bool(settings.admin_password)
 
 
-def check_password(db: DBSession, password: str) -> User | None:
-    user = _get_or_create_admin(db)
-    try:
-        _hasher.verify(user.password_hash, password)
-        return user
-    except VerifyMismatchError:
+def authenticate(db: DBSession, email: str, password: str) -> User | None:
+    email = (email or "").strip().lower()
+    admin = admin_user(db)
+    user = admin if email == admin.email else db.execute(
+        select(User).where(User.email == email)).scalar_one_or_none()
+    if user is None or not verify_password(user.password_hash, password):
         return None
+    return user
+
+
+def check_password(db: DBSession, password: str) -> User | None:
+    """Admin-only password check (the original single-user login)."""
+    user = admin_user(db)
+    return user if verify_password(user.password_hash, password) else None
+
+
+def create_customer(db: DBSession, *, email: str, password: str, name: str,
+                    company: str = "") -> User:
+    user = User(email=email.strip().lower(), password_hash=hash_password(password),
+                role="customer", name=name.strip()[:160], company=(company or "").strip()[:160] or None,
+                status="active")
+    db.add(user)
+    db.flush()
+    return user
 
 
 # --- TOTP (Google Authenticator) -------------------------------------------
@@ -137,28 +169,37 @@ def create_session(db: DBSession, user: User) -> str:
 # valid a moment ago is trusted for SESSION_CACHE_SECONDS. Logging out clears
 # the cache, so a logout still takes effect at once.
 SESSION_CACHE_SECONDS = 60
-_session_cache: dict[str, float] = {}
+_session_cache: dict[str, tuple[float, dict]] = {}
 _session_cache_lock = threading.Lock()
 
 
-def session_is_valid(db_factory, token: str | None) -> bool:
-    """True if the token belongs to a live session. Blocking: run off the event loop."""
+def session_identity(db_factory, token: str | None) -> dict | None:
+    """{"id", "role", "status"} for a live session, else None.
+
+    Blocking: run off the event loop.
+    """
     if not token:
-        return False
+        return None
     now = time.monotonic()
     with _session_cache_lock:
-        if _session_cache.get(token, 0) > now:
-            return True
+        hit = _session_cache.get(token)
+        if hit and hit[0] > now:
+            return hit[1]
     db = db_factory()
     try:
-        ok = resolve_session(db, token) is not None
+        user = resolve_session(db, token)
+        ident = {"id": user.id, "role": user.role, "status": user.status} if user else None
         db.commit()
     finally:
         db.close()
-    if ok:
+    if ident:
         with _session_cache_lock:
-            _session_cache[token] = now + SESSION_CACHE_SECONDS
-    return ok
+            _session_cache[token] = (now + SESSION_CACHE_SECONDS, ident)
+    return ident
+
+
+def session_is_valid(db_factory, token: str | None) -> bool:
+    return session_identity(db_factory, token) is not None
 
 
 def _forget_sessions(token: str | None = None) -> None:

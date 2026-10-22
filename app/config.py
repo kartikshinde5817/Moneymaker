@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{BASE_DIR / 'moneymaker.db'}"
     secret_key: str = "dev-only-change-me"
     admin_password: str = ""  # blank = no login required (localhost use)
+    # The platform owner's login. Customers sign up themselves.
+    admin_email: str = "admin@local"
+    platform_name: str = "Money Maker"
+    support_email: str = ""
+
+    # --- payments (Razorpay) ----------------------------------------------
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+    trial_hours: int = 24
 
     # --- AI ---------------------------------------------------------------
     # Free by default: the paid Claude API is used only when AI_ENABLED=true is

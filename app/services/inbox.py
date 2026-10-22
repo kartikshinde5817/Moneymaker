@@ -139,16 +139,18 @@ def classify(inbound: Inbound) -> str:
     return "replied"
 
 
-def fetch_unseen(limit: int = 40) -> list[Inbound]:
+def _login(cfg):
+    box = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port, timeout=30)
+    box.login(cfg.imap_user or cfg.smtp_user, cfg.imap_pass or cfg.smtp_pass)
+    box.select(cfg.imap_folder or "INBOX")
+    return box
+
+
+def fetch_unseen(cfg, limit: int = 40) -> list[Inbound]:
     """Read unseen mail. Messages are marked seen only once handled."""
-    host = settings.imap_host
-    user = settings.imap_user or settings.smtp_user
-    password = settings.imap_pass or settings.smtp_pass
     out: list[Inbound] = []
     try:
-        with imaplib.IMAP4_SSL(host, settings.imap_port) as box:
-            box.login(user, password)
-            box.select(settings.imap_folder)
+        with _login(cfg) as box:
             status, data = box.search(None, "UNSEEN")
             if status != "OK":
                 return out
@@ -175,53 +177,78 @@ def fetch_unseen(limit: int = 40) -> list[Inbound]:
     return out
 
 
-def _match_message(db: Session, inbound: Inbound) -> EmailMessage | None:
-    """Header match first (exact), then the recipient address."""
+def _match_message(db: Session, inbound: Inbound, owner_id: int) -> EmailMessage | None:
+    """Header match first (exact), then the recipient address - only among
+    the emails this customer sent, since this is their inbox."""
     ids = set()
     for raw in (inbound.in_reply_to, inbound.references):
         ids.update(re.findall(r"<[^>]+>", raw or ""))
     for mid in ids:
         hit = db.execute(
-            select(EmailMessage).where(EmailMessage.provider_message_id == mid)
-        ).scalar_one_or_none()
+            select(EmailMessage).where(EmailMessage.provider_message_id == mid,
+                                       EmailMessage.owner_id == owner_id)
+        ).scalars().first()
         if hit:
             return hit
     if inbound.from_email:
         return db.execute(
             select(EmailMessage)
             .where(EmailMessage.to_email == inbound.from_email,
+                   EmailMessage.owner_id == owner_id,
                    EmailMessage.status == "sent")
             .order_by(EmailMessage.sent_at.desc()).limit(1)
-        ).scalar_one_or_none()
+        ).scalars().first()
     return None
 
 
-def _mark_seen(uids: list[bytes]) -> None:
+def _mark_seen(cfg, uids: list[bytes]) -> None:
     if not uids:
         return
     try:
-        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as box:
-            box.login(settings.imap_user or settings.smtp_user,
-                      settings.imap_pass or settings.smtp_pass)
-            box.select(settings.imap_folder)
+        with _login(cfg) as box:
             for uid in uids:
                 box.store(uid, "+FLAGS", "\\Seen")
     except Exception as exc:  # noqa: BLE001
         log.warning("could not mark messages seen: %s", exc)
 
 
-def poll(db: Session) -> dict:
-    """One polling pass. Safe to run on a timer."""
+def poll_all(db: Session) -> dict:
+    """Check the inbox of every customer who has connected one and has sent
+    something. Safe to run on a timer."""
+    from app.services.tenant import config_for
+
+    owners = db.execute(
+        select(EmailMessage.owner_id).where(EmailMessage.status == "sent").distinct()
+    ).scalars().all()
+    total = {"checked": 0, "replies": 0, "bounces": 0, "unsubscribes": 0,
+             "unmatched": 0, "alerts": 0}
+    for owner in owners:
+        if owner is None:
+            continue
+        cfg = config_for(db, owner)
+        if not cfg.imap_ready:
+            continue
+        for k, v in poll(db, cfg).items():
+            if isinstance(v, int):
+                total[k] = total.get(k, 0) + v
+    return total
+
+
+def poll(db: Session, cfg) -> dict:
+    """One polling pass over one customer's inbox."""
+    from app.services.tenant import is_admin
+
     result = {"checked": 0, "replies": 0, "bounces": 0, "unsubscribes": 0,
               "unmatched": 0, "alerts": 0}
-    if not ready():
-        result["error"] = "IMAP is not configured"
+    if not cfg.imap_ready:
+        result["error"] = "No inbox connected - add your IMAP details in Settings"
         return result
+    alerts = is_admin(db, cfg.owner_id)  # Telegram alerts go to the platform owner only
 
     handled: list[bytes] = []
-    for inbound in fetch_unseen():
+    for inbound in fetch_unseen(cfg):
         result["checked"] += 1
-        message = _match_message(db, inbound)
+        message = _match_message(db, inbound, cfg.owner_id)
         if message is None:
             result["unmatched"] += 1
             continue  # left unread - it is ordinary mail, not ours
@@ -240,12 +267,12 @@ def poll(db: Session) -> dict:
         ))
 
         if kind == "bounce":
-            suppress(db, message.to_email, "hard bounce")
+            suppress(db, message.to_email, "hard bounce")  # dead for everyone
             if lead:
                 lead.status, lead.stage = "bounced", "closed"
             result["bounces"] += 1
         elif kind == "unsubscribe":
-            suppress(db, message.to_email, "asked to be removed by reply")
+            suppress(db, message.to_email, "asked to be removed by reply", owner_id=cfg.owner_id)
             if lead:
                 lead.status, lead.stage = "unsubscribed", "closed"
             result["unsubscribes"] += 1
@@ -258,13 +285,13 @@ def poll(db: Session) -> dict:
                 lead.next_action_at = None
             result["replies"] += 1
 
-        if kind not in ("bounce", "auto_reply") and company:
+        if alerts and kind not in ("bounce", "auto_reply") and company:
             ok, _ = notify.reply_alert(
                 company=company.name,
                 contact=contact.full_name if contact else inbound.from_name,
                 from_email=inbound.from_email, subject=inbound.subject,
                 snippet=inbound.body, sentiment=kind,
-                lead_url=f"{settings.public_base_url.rstrip('/')}/#lead-{lead.id}" if lead else "",
+                lead_url=f"{settings.public_base_url.rstrip('/')}/app#lead-{lead.id}" if lead else "",
                 service=lead.service_category if lead else "",
                 score=lead.score if lead else None,
             )
@@ -274,5 +301,5 @@ def poll(db: Session) -> dict:
         handled.append(inbound.uid)
         db.commit()
 
-    _mark_seen(handled)
+    _mark_seen(cfg, handled)
     return result

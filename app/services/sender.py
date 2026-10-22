@@ -31,10 +31,11 @@ def heartbeat(db: Session, sent: int = 0) -> None:
     row.updated_at = utcnow()
 
 
-def outbox_summary(db: Session) -> dict:
+def outbox_summary(db: Session, owner_id: int) -> dict:
     counts = dict(db.execute(
         select(EmailMessage.status, func.count(EmailMessage.id))
-        .where(EmailMessage.status.in_(("queued", "failed", "sending")))
+        .where(EmailMessage.owner_id == owner_id,
+               EmailMessage.status.in_(("queued", "failed", "sending")))
         .group_by(EmailMessage.status)
     ).all())
     beat = db.get(AppState, HEARTBEAT_KEY)

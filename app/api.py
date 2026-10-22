@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from dataclasses import dataclass
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select, update
@@ -18,7 +19,9 @@ from app.models import (
     EmailMessage, Lead, Mailbox, SearchQuery, Signal, Source, Suppression,
     Service, WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
 )
-from app.services import ai, catalog, inbox, linkedin, mailer, notify, pipeline, scoring, whatsapp
+from app.services import (
+    ai, auth, billing, catalog, inbox, linkedin, mailer, notify, pipeline, scoring, tenant, whatsapp,
+)
 from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
 from app.services.discovery import available_sources
 from app.services.signals import company_signals, signals_by_company
@@ -31,41 +34,113 @@ _running_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
+# Who is asking. Every query below is limited to this user's own rows.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Me:
+    id: int
+    role: str
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+
+def current_user(request: Request, db: Session = Depends(get_db)) -> Me:
+    ident = getattr(request.state, "user", None)
+    if ident:
+        if ident.get("status") != "active":
+            raise HTTPException(403, "Your account is suspended. Please contact support.")
+        return Me(ident["id"], ident["role"])
+    if not auth.login_required():
+        # Local use with no ADMIN_PASSWORD: the one person at the keyboard is the admin.
+        return Me(tenant.admin_id(db), "admin")
+    raise HTTPException(401, "Not authenticated")
+
+
+def admin_only(me: Me = Depends(current_user)) -> Me:
+    if not me.is_admin:
+        raise HTTPException(403, "Only the platform admin can do this")
+    return me
+
+
+def _owned(db: Session, model, row_id: int, me: Me, what: str = "item"):
+    """Fetch a row that must belong to this user. Someone else's row is a 404,
+    not a 403, so ids do not reveal what exists."""
+    row = db.get(model, row_id)
+    if row is None or row.owner_id != me.id:
+        raise HTTPException(404, f"{what} not found")
+    return row
+
+
+def _require_bot(db: Session, me: Me, bot_key: str) -> None:
+    if not billing.has_access(db, me.id, bot_key):
+        raise HTTPException(402, f"You don't have access to the {catalog.label_for(bot_key)} bot. "
+                                 f"Start a free trial or subscribe under My bots.")
+
+
+# ---------------------------------------------------------------------------
 # Meta & stats
 # ---------------------------------------------------------------------------
 
 
 @router.get("/meta")
-def meta(db: Session = Depends(get_db)):
+def meta(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import User
+
+    cfg = tenant.config_for(db, me.id)
+    user = db.get(User, me.id)
+    trial_end = None
+    if user and user.trial_started_at:
+        trial_end = (as_aware(user.trial_started_at) + dt.timedelta(hours=settings.trial_hours)).isoformat()
+    bots = billing.catalog(db)
     return {
-        "app": "Money Maker",
+        "app": settings.platform_name,
+        "user": {
+            "id": me.id, "role": me.role, "name": user.name if user else "",
+            "email": user.email if user else "", "company": user.company if user else "",
+        },
+        "access": billing.access_map(db, me.id),
+        "trial": {"used": bool(user and user.trial_started_at),
+                  "bot": user.trial_bot if user else None, "ends_at": trial_end,
+                  "hours": settings.trial_hours},
+        "bots": [billing.bot_json(b) for b in bots],
+        "razorpay_ready": billing.razorpay_ready(),
         "ai_ready": ai.available(),
         "send_on_server": settings.send_on_server,
-        "email_ready": mailer.provider_ready(),
-        "sender_configured": bool(settings.sender_email and settings.company_postal_address),
+        "email_ready": cfg.smtp_ready,
+        "sender_configured": cfg.sender_ready,
         "sources": available_sources(),
         "services": [{"key": x["key"], "label": x["label"], "builtin": x["builtin"]}
                      for x in catalog.all_services()],
         "country_policy": {
-            code: {"name": COUNTRY_NAMES.get(code, code), "policy": p, "reason": r} for code, (p, r) in COUNTRY_POLICY.items()
+            code: {"name": COUNTRY_NAMES.get(code, code), "policy": p, "reason": r}
+            for code, (p, r) in COUNTRY_POLICY.items()
         },
         "scheduler_enabled": settings.scheduler_enabled,
-        "timezone": settings.scheduler_timezone,
-        "telegram_ready": notify.ready(),
-        "inbox_ready": inbox.ready(),
+        "timezone": cfg.timezone,
+        "telegram_ready": notify.ready() and me.is_admin,
+        "inbox_ready": cfg.imap_ready,
         "whatsapp_enabled": settings.whatsapp_enabled,
+        "support_email": settings.support_email,
     }
 
 
 @router.get("/stats/summary")
-def stats_summary(db: Session = Depends(get_db)):
+def stats_summary(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
     def count(model, *where):
-        q = select(func.count(model.id))
+        q = select(func.count(model.id)).where(_mine(model, me))
         for w in where:
             q = q.where(w)
         return q.scalar_subquery()
+
+    events = lambda kind: (  # noqa: E731 - events belong to the user through their message
+        select(func.count(EmailEvent.id)).join(EmailMessage, EmailMessage.id == EmailEvent.message_id)
+        .where(EmailMessage.owner_id == me.id, EmailEvent.type == kind).scalar_subquery())
 
     # One SELECT of subqueries: a single round trip instead of seventeen.
     parts = {
@@ -78,24 +153,32 @@ def stats_summary(db: Session = Depends(get_db)):
         "queued": count(EmailMessage, EmailMessage.status == "queued"),
         "emails_sent": count(EmailMessage, EmailMessage.status == "sent"),
         "sent_today": count(EmailMessage, EmailMessage.status == "sent", EmailMessage.sent_at >= today),
-        "replies": count(EmailEvent, EmailEvent.type == "reply"),
-        "bounces": count(EmailEvent, EmailEvent.type == "bounce"),
+        "replies": events("reply"),
+        "bounces": events("bounce"),
         "unsubscribed": count(Suppression),
         "rejected": count(Lead, Lead.stage == "rejected"),
         "whatsapp_pending": count(WhatsAppMessage, WhatsAppMessage.status == "pending"),
         "interested": count(Lead, Lead.status == "interested"),
-        "companies": count(Company),
-        "ai_cost_usd": select(func.coalesce(func.sum(AIAnalysis.cost_usd), 0.0)).scalar_subquery(),
+        "companies": select(func.count(func.distinct(Lead.company_id)))
+                     .where(Lead.owner_id == me.id).scalar_subquery(),
+        "ai_cost_usd": select(func.coalesce(func.sum(AIAnalysis.cost_usd), 0.0))
+                       .join(Lead, Lead.id == AIAnalysis.lead_id)
+                       .where(Lead.owner_id == me.id).scalar_subquery(),
     }
     row = db.execute(select(*[v.label(k) for k, v in parts.items()])).one()._mapping
     out = {k: row[k] for k in parts}
     out["ai_cost_usd"] = round(float(out["ai_cost_usd"] or 0), 4)
-    out["daily_cap"] = settings.daily_email_cap_global
+    out["daily_cap"] = tenant.config_for(db, me.id).daily_cap
     return out
 
 
+def _mine(model, me: Me):
+    return model.owner_id == me.id
+
+
 @router.get("/stats/breakdown")
-def stats_breakdown(by: str = "service", db: Session = Depends(get_db)):
+def stats_breakdown(by: str = "service", me: Me = Depends(current_user),
+                    db: Session = Depends(get_db)):
     column = {
         "service": Lead.service_category,
         "source": Lead.source_kind,
@@ -105,18 +188,19 @@ def stats_breakdown(by: str = "service", db: Session = Depends(get_db)):
     }.get(by)
     if column is not None:
         rows = db.execute(
-            select(column, func.count(Lead.id)).group_by(column).order_by(func.count(Lead.id).desc())
+            select(column, func.count(Lead.id)).where(Lead.owner_id == me.id)
+            .group_by(column).order_by(func.count(Lead.id).desc())
         ).all()
     elif by == "country":
         rows = db.execute(
             select(Company.country, func.count(Lead.id))
-            .join(Lead, Lead.company_id == Company.id)
+            .join(Lead, Lead.company_id == Company.id).where(Lead.owner_id == me.id)
             .group_by(Company.country).order_by(func.count(Lead.id).desc())
         ).all()
     elif by == "industry":
         rows = db.execute(
             select(Company.industry, func.count(Lead.id))
-            .join(Lead, Lead.company_id == Company.id)
+            .join(Lead, Lead.company_id == Company.id).where(Lead.owner_id == me.id)
             .group_by(Company.industry).order_by(func.count(Lead.id).desc()).limit(12)
         ).all()
     else:
@@ -125,15 +209,17 @@ def stats_breakdown(by: str = "service", db: Session = Depends(get_db)):
 
 
 @router.get("/stats/timeseries")
-def stats_timeseries(days: int = 30, db: Session = Depends(get_db)):
+def stats_timeseries(days: int = 30, me: Me = Depends(current_user),
+                     db: Session = Depends(get_db)):
     since = utcnow() - dt.timedelta(days=days)
     leads = db.execute(
         select(func.date(Lead.created_at), func.count(Lead.id))
-        .where(Lead.created_at >= since).group_by(func.date(Lead.created_at))
+        .where(Lead.owner_id == me.id, Lead.created_at >= since).group_by(func.date(Lead.created_at))
     ).all()
     sent = db.execute(
         select(func.date(EmailMessage.sent_at), func.count(EmailMessage.id))
-        .where(EmailMessage.sent_at >= since).group_by(func.date(EmailMessage.sent_at))
+        .where(EmailMessage.owner_id == me.id, EmailMessage.sent_at >= since)
+        .group_by(func.date(EmailMessage.sent_at))
     ).all()
     lead_map = {str(d): c for d, c in leads if d}
     sent_map = {str(d): c for d, c in sent if d}
@@ -253,15 +339,16 @@ class ServiceIn(BaseModel):
         return v
 
 
-def _service_json(db: Session, svc: dict) -> dict:
+def _service_json(db: Session, svc: dict, me: Me) -> dict:
     used = db.execute(
-        select(func.count(Campaign.id)).where(Campaign.service_category == svc["key"])
+        select(func.count(Campaign.id)).where(Campaign.service_category == svc["key"],
+                                              Campaign.owner_id == me.id)
     ).scalar_one()
     return {**svc, "campaigns": used}
 
 
 @router.get("/services")
-def list_services(db: Session = Depends(get_db)):
+def list_services(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from app.services.discovery.base import KEYWORD_GROUPS
     out = []
     for svc in catalog.all_services():
@@ -269,24 +356,27 @@ def list_services(db: Session = Depends(get_db)):
             svc = {**svc, "keywords": KEYWORD_GROUPS.get(svc["key"], []),
                    "pitch": ai.SERVICE_PITCH.get(svc["key"], ""),
                    "intent_phrases": [], "industries": []}
-        out.append(_service_json(db, svc))
+        out.append(_service_json(db, svc, me))
     return out
 
 
 @router.post("/services")
-def create_service(payload: ServiceIn, db: Session = Depends(get_db)):
+def create_service(payload: ServiceIn, me: Me = Depends(admin_only), db: Session = Depends(get_db)):
     taken = set(db.execute(select(Service.key)).scalars())
     key = catalog.slugify(payload.label, taken)
     if any(x["label"].lower() == payload.label.lower() for x in catalog.all_services()):
         raise HTTPException(409, f"a service called '{payload.label}' already exists")
     db.add(Service(key=key, **payload.model_dump()))
+    # Every service is something customers can buy: give it a bot with prices.
+    billing.ensure_bot_for_service(db, key, payload.label, payload.pitch)
     db.commit()
     catalog.invalidate()
     return {"key": key}
 
 
 @router.put("/services/{key}")
-def update_service(key: str, payload: ServiceIn, db: Session = Depends(get_db)):
+def update_service(key: str, payload: ServiceIn, me: Me = Depends(admin_only),
+                   db: Session = Depends(get_db)):
     if key in catalog.BUILTIN:
         raise HTTPException(400, "built-in services cannot be edited")
     svc = db.execute(select(Service).where(Service.key == key)).scalar_one_or_none()
@@ -304,7 +394,7 @@ def update_service(key: str, payload: ServiceIn, db: Session = Depends(get_db)):
 
 
 @router.delete("/services/{key}")
-def delete_service(key: str, db: Session = Depends(get_db)):
+def delete_service(key: str, me: Me = Depends(admin_only), db: Session = Depends(get_db)):
     if key in catalog.BUILTIN:
         raise HTTPException(400, "built-in services cannot be deleted")
     svc = db.execute(select(Service).where(Service.key == key)).scalar_one_or_none()
@@ -323,18 +413,21 @@ def delete_service(key: str, db: Session = Depends(get_db)):
 
 
 @router.get("/campaigns")
-def list_campaigns(db: Session = Depends(get_db)):
+def list_campaigns(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from app.scheduler import upcoming
 
-    campaigns = db.execute(select(Campaign).order_by(Campaign.schedule_time)).scalars().all()
+    campaigns = db.execute(select(Campaign).where(Campaign.owner_id == me.id)
+                           .order_by(Campaign.schedule_time)).scalars().all()
+    access = billing.access_map(db, me.id)
     next_runs = {u["campaign_id"]: u["at"] for u in upcoming(db, campaigns)}
     # Two grouped queries for all campaigns, not two queries per campaign.
     lead_counts = dict(db.execute(
-        select(Lead.campaign_id, func.count(Lead.id)).group_by(Lead.campaign_id)
+        select(Lead.campaign_id, func.count(Lead.id)).where(Lead.owner_id == me.id)
+        .group_by(Lead.campaign_id)
     ).all())
     latest = select(
         CampaignRun.campaign_id, func.max(CampaignRun.started_at).label("at")
-    ).group_by(CampaignRun.campaign_id).subquery()
+    ).where(CampaignRun.owner_id == me.id).group_by(CampaignRun.campaign_id).subquery()
     last_runs = {r.campaign_id: r for r in db.execute(
         select(CampaignRun).join(latest, (CampaignRun.campaign_id == latest.c.campaign_id)
                                  & (CampaignRun.started_at == latest.c.at))
@@ -356,6 +449,7 @@ def list_campaigns(db: Session = Depends(get_db)):
             "city_coverage": __import__("app.services.cities", fromlist=["x"]).coverage(
                 c.countries or [], c.city_history),
             "running": c.id in _running,
+            "locked": c.service_category not in access,
             "stopping": pipeline.stop_requested(c.id),
             "next_run": next_runs.get(c.id),
             "last_run": None if not last else {
@@ -367,9 +461,21 @@ def list_campaigns(db: Session = Depends(get_db)):
     return out
 
 
+# Customers' agents stay within a sensible size: every run uses shared search
+# quotas, so one account must not be able to exhaust them for everyone.
+CUSTOMER_MAX_LEADS_PER_RUN = 100
+
+
+def _limit_for(me: Me, payload: "CampaignIn") -> None:
+    if not me.is_admin and payload.daily_lead_limit > CUSTOMER_MAX_LEADS_PER_RUN:
+        raise HTTPException(400, f"Leads per run can be at most {CUSTOMER_MAX_LEADS_PER_RUN}.")
+
+
 @router.post("/campaigns")
-def create_campaign(payload: CampaignIn, db: Session = Depends(get_db)):
-    c = Campaign(**payload.model_dump())
+def create_campaign(payload: CampaignIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    _require_bot(db, me, payload.service_category)
+    _limit_for(me, payload)
+    c = Campaign(owner_id=me.id, **payload.model_dump())
     db.add(c)
     db.commit()
     from app.scheduler import reschedule
@@ -378,10 +484,12 @@ def create_campaign(payload: CampaignIn, db: Session = Depends(get_db)):
 
 
 @router.put("/campaigns/{campaign_id}")
-def update_campaign(campaign_id: int, payload: CampaignIn, db: Session = Depends(get_db)):
-    c = db.get(Campaign, campaign_id)
-    if not c:
-        raise HTTPException(404, "campaign not found")
+def update_campaign(campaign_id: int, payload: CampaignIn, me: Me = Depends(current_user),
+                    db: Session = Depends(get_db)):
+    c = _owned(db, Campaign, campaign_id, me, "campaign")
+    if payload.service_category != c.service_category:
+        _require_bot(db, me, payload.service_category)
+    _limit_for(me, payload)
     for k, v in payload.model_dump().items():
         setattr(c, k, v)
     db.commit()
@@ -391,10 +499,8 @@ def update_campaign(campaign_id: int, payload: CampaignIn, db: Session = Depends
 
 
 @router.delete("/campaigns/{campaign_id}")
-def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
-    c = db.get(Campaign, campaign_id)
-    if not c:
-        raise HTTPException(404, "campaign not found")
+def delete_campaign(campaign_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    c = _owned(db, Campaign, campaign_id, me, "campaign")
     # Leads outlive the campaign that found them: detach rather than lose them.
     # Lead.campaign_id has no ON DELETE rule, so Postgres refuses the delete
     # while any lead still points here.
@@ -418,10 +524,9 @@ def _run_campaign_bg(campaign_id: int, trigger: str) -> None:
 
 
 @router.post("/campaigns/{campaign_id}/stop")
-def stop_campaign(campaign_id: int, db: Session = Depends(get_db)):
+def stop_campaign(campaign_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
     """Stop a running campaign, or reset one whose run is no longer alive."""
-    if not db.get(Campaign, campaign_id):
-        raise HTTPException(404, "campaign not found")
+    _owned(db, Campaign, campaign_id, me, "campaign")
     with _running_lock:
         live = campaign_id in _running
     if live:
@@ -435,10 +540,9 @@ def stop_campaign(campaign_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/campaigns/{campaign_id}/run")
-def run_campaign_now(campaign_id: int, db: Session = Depends(get_db)):
-    campaign = db.get(Campaign, campaign_id)
-    if not campaign:
-        raise HTTPException(404, "campaign not found")
+def run_campaign_now(campaign_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    campaign = _owned(db, Campaign, campaign_id, me, "campaign")
+    _require_bot(db, me, campaign.service_category)
     with _running_lock:
         if campaign_id in _running:
             raise HTTPException(409, "this campaign is already running")
@@ -450,7 +554,8 @@ def run_campaign_now(campaign_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/campaigns/{campaign_id}/runs")
-def campaign_runs(campaign_id: int, db: Session = Depends(get_db)):
+def campaign_runs(campaign_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    _owned(db, Campaign, campaign_id, me, "campaign")
     runs = db.execute(
         select(CampaignRun).where(CampaignRun.campaign_id == campaign_id)
         .order_by(CampaignRun.started_at.desc()).limit(20)
@@ -464,7 +569,7 @@ def campaign_runs(campaign_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/workflow")
-def workflow_state(db: Session = Depends(get_db)):
+def workflow_state(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     """Live state of the agent graph for the main dashboard.
 
     Returns the most recent run - active if one is in flight, otherwise the
@@ -475,7 +580,9 @@ def workflow_state(db: Session = Depends(get_db)):
     from app.services.pipeline import PIPELINE_STAGES
 
     schedule = {
-        "upcoming": upcoming(db),
+        "upcoming": upcoming(db, db.execute(
+            select(Campaign).where(Campaign.owner_id == me.id, Campaign.enabled.is_(True))
+        ).scalars().all()),
         "scheduler_enabled": settings.scheduler_enabled,
         "timezone": settings.scheduler_timezone,
     }
@@ -483,6 +590,7 @@ def workflow_state(db: Session = Depends(get_db)):
     # A running run wins; otherwise the newest. One query, campaign included.
     found = db.execute(
         select(CampaignRun, Campaign).outerjoin(Campaign, Campaign.id == CampaignRun.campaign_id)
+        .where(CampaignRun.owner_id == me.id)
         .order_by((CampaignRun.status == "running").desc(), CampaignRun.started_at.desc())
         .limit(1)
     ).first()
@@ -497,7 +605,8 @@ def workflow_state(db: Session = Depends(get_db)):
     if run is None:
         return {
             "run": None, "nodes": idle_nodes, "log": [],
-            "campaigns_ready": db.execute(select(func.count(Campaign.id))).scalar_one(),
+            "campaigns_ready": db.execute(select(func.count(Campaign.id))
+                                          .where(Campaign.owner_id == me.id)).scalar_one(),
             **schedule,
         }
 
@@ -526,10 +635,8 @@ def workflow_state(db: Session = Depends(get_db)):
 
 
 @router.get("/runs/{run_id}")
-def run_detail(run_id: int, db: Session = Depends(get_db)):
-    r = db.get(CampaignRun, run_id)
-    if not r:
-        raise HTTPException(404, "run not found")
+def run_detail(run_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    r = _owned(db, CampaignRun, run_id, me, "run")
     queries = db.execute(
         select(SearchQuery).where(SearchQuery.run_id == run_id)
     ).scalars().all()
@@ -545,10 +652,11 @@ def run_detail(run_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/runs")
-def recent_runs(db: Session = Depends(get_db)):
+def recent_runs(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     rows = db.execute(
         select(CampaignRun, Campaign.name)
         .join(Campaign, Campaign.id == CampaignRun.campaign_id)
+        .where(CampaignRun.owner_id == me.id)
         .order_by(CampaignRun.started_at.desc()).limit(15)
     ).all()
     return [{
@@ -586,11 +694,12 @@ def list_leads(
     status: str = "", stage: str = "", min_score: int = 0, q: str = "",
     date_from: str = "", date_to: str = "", has_email: str = "",
     sort: str = "score", page: int = 1, page_size: int = 50,
-    db: Session = Depends(get_db),
+    me: Me = Depends(current_user), db: Session = Depends(get_db),
 ):
+    page_size = max(1, min(page_size, 200))
     stmt = select(Lead, Company, Contact).join(Company, Company.id == Lead.company_id).outerjoin(
         Contact, Contact.id == Lead.contact_id
-    )
+    ).where(Lead.owner_id == me.id)
     if service:
         stmt = stmt.where(Lead.service_category == service)
     if source:
@@ -635,10 +744,11 @@ def list_leads(
 
 
 @router.get("/leads/{lead_id}")
-def lead_detail(lead_id: int, db: Session = Depends(get_db)):
+def lead_detail(lead_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
     row = db.execute(
         select(Lead, Company, Contact).join(Company, Company.id == Lead.company_id)
-        .outerjoin(Contact, Contact.id == Lead.contact_id).where(Lead.id == lead_id)
+        .outerjoin(Contact, Contact.id == Lead.contact_id)
+        .where(Lead.id == lead_id, Lead.owner_id == me.id)
     ).first()
     if not row:
         raise HTTPException(404, "lead not found")
@@ -660,7 +770,7 @@ def lead_detail(lead_id: int, db: Session = Depends(get_db)):
         select(AIAnalysis).where(AIAnalysis.lead_id == lead_id).order_by(AIAnalysis.created_at)
     ).scalars().all()
     messages = db.execute(
-        select(EmailMessage).where(EmailMessage.lead_id == lead_id)
+        select(EmailMessage).where(EmailMessage.lead_id == lead_id, EmailMessage.owner_id == me.id)
         .order_by(EmailMessage.created_at.desc())
     ).scalars().all()
     contacts = db.execute(
@@ -714,10 +824,9 @@ class LeadPatch(BaseModel):
 
 
 @router.patch("/leads/{lead_id}")
-def patch_lead(lead_id: int, payload: LeadPatch, db: Session = Depends(get_db)):
-    lead = db.get(Lead, lead_id)
-    if not lead:
-        raise HTTPException(404, "lead not found")
+def patch_lead(lead_id: int, payload: LeadPatch, me: Me = Depends(current_user),
+               db: Session = Depends(get_db)):
+    lead = _owned(db, Lead, lead_id, me, "lead")
     if payload.status is not None:
         lead.status = payload.status
     if payload.notes is not None:
@@ -727,10 +836,8 @@ def patch_lead(lead_id: int, payload: LeadPatch, db: Session = Depends(get_db)):
 
 
 @router.post("/leads/{lead_id}/rescore")
-def rescore_lead(lead_id: int, db: Session = Depends(get_db)):
-    lead = db.get(Lead, lead_id)
-    if not lead:
-        raise HTTPException(404, "lead not found")
+def rescore_lead(lead_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    lead = _owned(db, Lead, lead_id, me, "lead")
     company = db.get(Company, lead.company_id)
     contact = db.get(Contact, lead.contact_id) if lead.contact_id else None
     signals = company_signals(db, company.id)
@@ -746,10 +853,8 @@ def rescore_lead(lead_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/leads/{lead_id}/draft")
-def draft_lead(lead_id: int, db: Session = Depends(get_db)):
-    lead = db.get(Lead, lead_id)
-    if not lead:
-        raise HTTPException(404, "lead not found")
+def draft_lead(lead_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    lead = _owned(db, Lead, lead_id, me, "lead")
     company = db.get(Company, lead.company_id)
     contact = db.get(Contact, lead.contact_id) if lead.contact_id else None
     if not contact:
@@ -758,7 +863,8 @@ def draft_lead(lead_id: int, db: Session = Depends(get_db)):
     if not signals:
         raise HTTPException(400, "no evidence on file — refusing to write outreach")
 
-    draft = ai.draft_email(company, signals, contact, lead.service_category, mailer.sender_profile())
+    draft = ai.draft_email(company, signals, contact, lead.service_category,
+                           mailer.sender_profile(db, me.id))
     usage = draft.pop("_usage", {})
     db.add(AIAnalysis(
         lead_id=lead.id, agent="personalize", model=usage.get("model", ""),
@@ -768,7 +874,7 @@ def draft_lead(lead_id: int, db: Session = Depends(get_db)):
         cost_usd=usage.get("cost_usd", 0.0),
     ))
     message = EmailMessage(
-        lead_id=lead.id, contact_id=contact.id, to_email=contact.email,
+        owner_id=me.id, lead_id=lead.id, contact_id=contact.id, to_email=contact.email,
         subject=draft["subject"], body=draft["body"],
         cited_signal_ids=draft.get("cited_signal_ids", []),
         unsubscribe_token=mailer.new_unsubscribe_token(),
@@ -787,12 +893,13 @@ def draft_lead(lead_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/outbox")
-def outbox(status: str = "pending_approval", db: Session = Depends(get_db)):
+def outbox(status: str = "pending_approval", me: Me = Depends(current_user),
+           db: Session = Depends(get_db)):
     rows = db.execute(
         select(EmailMessage, Lead, Company)
         .join(Lead, Lead.id == EmailMessage.lead_id)
         .join(Company, Company.id == Lead.company_id)
-        .where(EmailMessage.status == status)
+        .where(EmailMessage.owner_id == me.id, EmailMessage.status == status)
         .order_by(Lead.score.desc(), EmailMessage.created_at.asc())
         .limit(200)
     ).all()
@@ -823,10 +930,9 @@ class MessagePatch(BaseModel):
 
 
 @router.patch("/outbox/{message_id}")
-def edit_message(message_id: int, payload: MessagePatch, db: Session = Depends(get_db)):
-    m = db.get(EmailMessage, message_id)
-    if not m:
-        raise HTTPException(404, "message not found")
+def edit_message(message_id: int, payload: MessagePatch, me: Me = Depends(current_user),
+                 db: Session = Depends(get_db)):
+    m = _owned(db, EmailMessage, message_id, me, "message")
     if m.status not in ("pending_approval", "draft", "queued"):
         raise HTTPException(400, f"cannot edit a message that is '{m.status}'")
     if payload.subject is not None:
@@ -838,10 +944,9 @@ def edit_message(message_id: int, payload: MessagePatch, db: Session = Depends(g
 
 
 @router.post("/outbox/{message_id}/approve")
-def approve_message(message_id: int, send_now: bool = True, db: Session = Depends(get_db)):
-    m = db.get(EmailMessage, message_id)
-    if not m:
-        raise HTTPException(404, "message not found")
+def approve_message(message_id: int, send_now: bool = True, me: Me = Depends(current_user),
+                    db: Session = Depends(get_db)):
+    m = _owned(db, EmailMessage, message_id, me, "message")
     lead = db.get(Lead, m.lead_id)
     company = db.get(Company, lead.company_id)
     contact = db.get(Contact, m.contact_id) if m.contact_id else None
@@ -859,15 +964,15 @@ def approve_message(message_id: int, send_now: bool = True, db: Session = Depend
     if send_now and settings.send_on_server:
         sent, detail = mailer.send_message(db, m)
         db.commit()
-        return {"ok": sent, "detail": detail, "status": m.status}
+        # Still queued means the server could not reach the mail server: the
+        # approval stands and the email goes out on the next attempt.
+        return {"ok": sent or m.status == "queued", "detail": detail, "status": m.status}
     return {"ok": True, "detail": "queued", "status": m.status}
 
 
 @router.post("/outbox/{message_id}/reject")
-def reject_message(message_id: int, db: Session = Depends(get_db)):
-    m = db.get(EmailMessage, message_id)
-    if not m:
-        raise HTTPException(404, "message not found")
+def reject_message(message_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    m = _owned(db, EmailMessage, message_id, me, "message")
     m.status = "rejected"
     lead = db.get(Lead, m.lead_id)
     if lead:
@@ -878,23 +983,24 @@ def reject_message(message_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/outbox/dispatch")
-def dispatch_now(limit: int = 25, db: Session = Depends(get_db)):
+def dispatch_now(limit: int = 25, me: Me = Depends(current_user), db: Session = Depends(get_db)):
     if not settings.send_on_server:
         return {"sent": 0, "failed": 0, "skipped": 0,
                 "details": ["Emails are sent from your computer (run.py --send-only), not this server."]}
-    return pipeline.dispatch_queue(db, limit=limit)
+    return pipeline.dispatch_queue(db, limit=min(limit, 50), owner_id=me.id)
 
 
 @router.get("/outbox/summary")
-def outbox_summary(db: Session = Depends(get_db)):
+def outbox_summary(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from app.services import sender
-    return {**sender.outbox_summary(db), "send_on_server": settings.send_on_server}
+    return {**sender.outbox_summary(db, me.id), "send_on_server": settings.send_on_server}
 
 
 @router.post("/outbox/retry-failed")
-def retry_failed(db: Session = Depends(get_db)):
+def retry_failed(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     """Put failed sends back in the queue. Every check runs again at send time."""
-    msgs = db.execute(select(EmailMessage).where(EmailMessage.status == "failed")).scalars().all()
+    msgs = db.execute(select(EmailMessage).where(EmailMessage.owner_id == me.id,
+                                                 EmailMessage.status == "failed")).scalars().all()
     for m in msgs:
         m.status = "queued"
         m.failure_reason = None
@@ -914,20 +1020,22 @@ def retry_failed(db: Session = Depends(get_db)):
 
 
 @router.get("/linkedin")
-def linkedin_queue(only_unemailable: bool = False, db: Session = Depends(get_db)):
+def linkedin_queue(only_unemailable: bool = False, me: Me = Depends(current_user),
+                   db: Session = Depends(get_db)):
     return {
-        "stats": linkedin.stats(db),
-        "leads": linkedin.queue(db, only_unemailable=only_unemailable),
+        "stats": linkedin.stats(db, me.id),
+        "leads": linkedin.queue(db, owner_id=me.id, only_unemailable=only_unemailable),
     }
 
 
 @router.get("/whatsapp")
-def whatsapp_queue(status: str = "pending", db: Session = Depends(get_db)):
+def whatsapp_queue(status: str = "pending", me: Me = Depends(current_user),
+                   db: Session = Depends(get_db)):
     rows = db.execute(
         select(WhatsAppMessage, Lead, Company)
         .join(Lead, Lead.id == WhatsAppMessage.lead_id)
         .join(Company, Company.id == Lead.company_id)
-        .where(WhatsAppMessage.status == status)
+        .where(WhatsAppMessage.owner_id == me.id, WhatsAppMessage.status == status)
         .order_by(Lead.score.desc(), WhatsAppMessage.created_at.asc())
         .limit(200)
     ).all()
@@ -942,17 +1050,18 @@ def whatsapp_queue(status: str = "pending", db: Session = Depends(get_db)):
 
 
 @router.post("/whatsapp/{message_id}/{action}")
-def whatsapp_mark(message_id: int, action: str, db: Session = Depends(get_db)):
+def whatsapp_mark(message_id: int, action: str, me: Me = Depends(current_user),
+                  db: Session = Depends(get_db)):
     if action not in ("opened", "sent", "skipped"):
         raise HTTPException(400, "action must be opened, sent or skipped")
-    if not whatsapp.mark(db, message_id, action):
+    if not whatsapp.mark(db, message_id, action, owner_id=me.id):
         raise HTTPException(404, "message not found")
     db.commit()
     return {"ok": True}
 
 
 @router.post("/notify/test")
-def notify_test():
+def notify_test(me: Me = Depends(admin_only)):
     if not notify.ready():
         raise HTTPException(400, "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are not set")
     ok, detail = notify.send(
@@ -964,15 +1073,17 @@ def notify_test():
 
 
 @router.post("/inbox/poll")
-def inbox_poll(db: Session = Depends(get_db)):
-    if not inbox.ready():
-        raise HTTPException(400, "IMAP is not configured")
-    return inbox.poll(db)
+def inbox_poll(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    cfg = tenant.config_for(db, me.id)
+    if not cfg.imap_ready:
+        raise HTTPException(400, "No inbox connected - add your IMAP details in Settings")
+    return inbox.poll(db, cfg)
 
 
 @router.get("/suppressions")
-def list_suppressions(db: Session = Depends(get_db)):
-    rows = db.execute(select(Suppression).order_by(Suppression.created_at.desc())).scalars().all()
+def list_suppressions(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.execute(select(Suppression).where(Suppression.owner_id == me.id)
+                      .order_by(Suppression.created_at.desc()).limit(500)).scalars().all()
     return [{"id": s.id, "scope": s.scope, "value": s.value, "reason": s.reason,
              "created_at": s.created_at.isoformat() if s.created_at else None} for s in rows]
 
@@ -980,23 +1091,28 @@ def list_suppressions(db: Session = Depends(get_db)):
 @router.post("/suppressions")
 def add_suppression(
     value: str = Body(..., embed=True), scope: str = Body("email", embed=True),
-    reason: str = Body("added manually", embed=True), db: Session = Depends(get_db),
+    reason: str = Body("added manually", embed=True), me: Me = Depends(current_user),
+    db: Session = Depends(get_db),
 ):
-    suppress(db, value, reason, scope)
+    if scope not in ("email", "domain"):
+        raise HTTPException(400, "scope must be email or domain")
+    suppress(db, value, reason, scope, owner_id=me.id)
     db.commit()
     return {"ok": True}
 
 
 @router.delete("/suppressions/{suppression_id}")
-def remove_suppression(suppression_id: int, db: Session = Depends(get_db)):
-    db.execute(delete(Suppression).where(Suppression.id == suppression_id))
+def remove_suppression(suppression_id: int, me: Me = Depends(current_user),
+                       db: Session = Depends(get_db)):
+    db.execute(delete(Suppression).where(Suppression.id == suppression_id,
+                                         Suppression.owner_id == me.id))
     db.commit()
     return {"ok": True}
 
 
 @router.get("/mailboxes")
-def list_mailboxes(db: Session = Depends(get_db)):
-    rows = db.execute(select(Mailbox)).scalars().all()
+def list_mailboxes(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.execute(select(Mailbox).where(Mailbox.owner_id == me.id)).scalars().all()
     return [{
         "id": m.id, "address": m.address, "enabled": m.enabled,
         "daily_cap": m.daily_cap, "effective_cap_today": mailer.warmup_cap(m),
@@ -1006,7 +1122,7 @@ def list_mailboxes(db: Session = Depends(get_db)):
 
 
 @router.get("/settings")
-def read_settings():
+def read_settings(me: Me = Depends(admin_only)):
     """Non-secret configuration, plus whether each secret is present."""
     return {
         "company_name": settings.company_name,
@@ -1031,29 +1147,35 @@ def read_settings():
 
 
 @router.delete("/leads/purge-evidenceless")
-def purge_evidenceless(db: Session = Depends(get_db)):
-    """Delete every lead whose company has no evidence on file.
+def purge_evidenceless(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    """Delete this user's leads whose company has no evidence on file.
 
     A lead with no signal is a name, not a prospect: nothing can be said to
-    them truthfully, so it can never be emailed. Mostly this clears rows
-    imported from the previous version.
+    them truthfully, so it can never be emailed. Companies are shared between
+    customers, so a company is only removed once no lead points at it.
     """
     company_ids = set(db.execute(select(Signal.company_id)).scalars().all())
-    leads = db.execute(select(Lead, Company).join(Company, Company.id == Lead.company_id)).all()
-    removed, kept = 0, 0
-    for lead, company in leads:
-        if company.id in company_ids:
+    leads = db.execute(select(Lead).where(Lead.owner_id == me.id)).scalars().all()
+    removed, kept, orphans = 0, 0, set()
+    for lead in leads:
+        if lead.company_id in company_ids:
             kept += 1
             continue
+        orphans.add(lead.company_id)
         db.delete(lead)
-        db.delete(company)
         removed += 1
+    db.flush()
+    for cid in orphans:
+        if not db.execute(select(Lead.id).where(Lead.company_id == cid).limit(1)).first():
+            company = db.get(Company, cid)
+            if company:
+                db.delete(company)
     db.commit()
     return {"removed": removed, "kept": kept}
 
 
 @router.post("/legacy/import")
-def legacy_import(db: Session = Depends(get_db)):
+def legacy_import(me: Me = Depends(admin_only), db: Session = Depends(get_db)):
     """Opt-in import of the previous version's leads, as history only."""
     from app.seed import migrate_legacy
 
@@ -1061,7 +1183,7 @@ def legacy_import(db: Session = Depends(get_db)):
 
 
 @router.get("/sources")
-def source_guide(db: Session = Depends(get_db)):
+def source_guide(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     """What each source is for, whether it is ready, and which key to get next."""
     from app.seed import DEFAULT_CAMPAIGNS, FREE_KEY_PRIORITY
 
@@ -1073,7 +1195,7 @@ def source_guide(db: Session = Depends(get_db)):
         "recommended": by_service,
         "free_keys": [
             {**k, "configured": _key_configured(k["name"])} for k in FREE_KEY_PRIORITY
-        ],
+        ] if me.is_admin else [],
     }
 
 
@@ -1087,7 +1209,7 @@ def _key_configured(name: str) -> bool:
 
 
 @router.post("/sources/apply-recommended")
-def apply_recommended(db: Session = Depends(get_db)):
+def apply_recommended(me: Me = Depends(admin_only), db: Session = Depends(get_db)):
     from app.seed import apply_recommended_sources
     from app.scheduler import reschedule
 
@@ -1097,7 +1219,7 @@ def apply_recommended(db: Session = Depends(get_db)):
 
 
 @router.get("/export/leads.xlsx")
-def export_leads(db: Session = Depends(get_db)):
+def export_leads(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from io import BytesIO
 
     from openpyxl import Workbook
@@ -1107,6 +1229,7 @@ def export_leads(db: Session = Depends(get_db)):
         select(Lead, Company, Contact)
         .join(Company, Company.id == Lead.company_id)
         .outerjoin(Contact, Contact.id == Lead.contact_id)
+        .where(Lead.owner_id == me.id)
         .order_by(Lead.score.desc())
     ).all()
 
@@ -1144,6 +1267,301 @@ def export_leads(db: Session = Depends(get_db)):
     )
 
 
+# ---------------------------------------------------------------------------
+# Account: profile, sending identity and mailbox
+# ---------------------------------------------------------------------------
+
+
+class AccountIn(BaseModel):
+    name: str | None = Field(None, max_length=160)
+    company: str | None = Field(None, max_length=160)
+    sender_name: str | None = Field(None, max_length=160)
+    sender_email: str | None = Field(None, max_length=320)
+    company_name: str | None = Field(None, max_length=160)
+    company_website: str | None = Field(None, max_length=512)
+    postal_address: str | None = Field(None, max_length=600)
+    privacy_url: str | None = Field(None, max_length=512)
+    smtp_host: str | None = Field(None, max_length=255)
+    smtp_port: int | None = Field(None, ge=1, le=65535)
+    smtp_use_ssl: bool | None = None
+    smtp_user: str | None = Field(None, max_length=320)
+    smtp_pass: str | None = Field(None, max_length=500)  # blank keeps the saved one
+    imap_host: str | None = Field(None, max_length=255)
+    imap_port: int | None = Field(None, ge=1, le=65535)
+    imap_user: str | None = Field(None, max_length=320)
+    imap_pass: str | None = Field(None, max_length=500)  # blank keeps the saved one
+    imap_folder: str | None = Field(None, max_length=120)
+    daily_cap: int | None = Field(None, ge=1, le=500)
+    timezone: str | None = Field(None, max_length=64)
+
+    @field_validator("sender_email")
+    @classmethod
+    def _email(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        if not v:
+            return None
+        from email_validator import EmailNotValidError, validate_email
+        try:
+            validate_email(v, check_deliverability=False)
+        except EmailNotValidError as exc:
+            raise ValueError(f"sender email is not valid: {exc}") from None
+        return v.lower()
+
+    @field_validator("timezone")
+    @classmethod
+    def _tz(cls, v: str | None) -> str | None:
+        if not v:
+            return None
+        from zoneinfo import ZoneInfo
+        try:
+            ZoneInfo(v)
+        except Exception:  # noqa: BLE001
+            raise ValueError(f"unknown timezone '{v}'") from None
+        return v
+
+
+ACCOUNT_FIELDS = ("sender_name", "sender_email", "company_name", "company_website",
+                  "postal_address", "privacy_url", "smtp_host", "smtp_port", "smtp_use_ssl",
+                  "smtp_user", "imap_host", "imap_port", "imap_user", "imap_folder",
+                  "daily_cap", "timezone")
+
+
+@router.get("/account")
+def read_account(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import AccountSettings, User
+
+    user = db.get(User, me.id)
+    row = db.get(AccountSettings, me.id)
+    cfg = tenant.config_for(db, me.id)
+    return {
+        "name": user.name, "email": user.email, "company": user.company, "role": user.role,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "saved": {f: getattr(row, f, None) if row else None for f in ACCOUNT_FIELDS},
+        "has_smtp_pass": bool(row and row.smtp_pass_enc) or bool(cfg.smtp_pass),
+        "has_imap_pass": bool(row and row.imap_pass_enc) or bool(cfg.imap_pass),
+        # What is actually used, after the admin's fall-back to the server settings.
+        "effective": {
+            "sender_name": cfg.sender_name, "sender_email": cfg.sender_email,
+            "company_name": cfg.company_name, "company_website": cfg.company_website,
+            "postal_address": cfg.postal_address, "privacy_url": cfg.privacy_url,
+            "smtp_host": cfg.smtp_host, "smtp_port": cfg.smtp_port, "smtp_use_ssl": cfg.smtp_use_ssl,
+            "smtp_user": cfg.smtp_user, "imap_host": cfg.imap_host, "imap_port": cfg.imap_port,
+            "imap_user": cfg.imap_user, "imap_folder": cfg.imap_folder,
+            "daily_cap": cfg.daily_cap, "timezone": cfg.timezone,
+        },
+        "ready": {"smtp": cfg.smtp_ready, "imap": cfg.imap_ready, "sender": cfg.sender_ready},
+    }
+
+
+@router.put("/account")
+def update_account(payload: AccountIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import AccountSettings, User
+
+    user = db.get(User, me.id)
+    if payload.name is not None:
+        user.name = payload.name.strip() or user.name
+    if payload.company is not None:
+        user.company = payload.company.strip() or None
+    row = db.get(AccountSettings, me.id)
+    if row is None:
+        row = AccountSettings(owner_id=me.id)
+        db.add(row)
+    data = payload.model_dump()
+    for f in ACCOUNT_FIELDS:
+        value = data.get(f)
+        if isinstance(value, str):
+            value = value.strip() or None
+        setattr(row, f, value)
+    if payload.smtp_pass:
+        row.smtp_pass_enc = tenant.encrypt(payload.smtp_pass)
+    if payload.imap_pass:
+        row.imap_pass_enc = tenant.encrypt(payload.imap_pass)
+    db.commit()
+    from app.scheduler import reschedule
+    reschedule()  # a timezone change moves this user's agents
+    return {"ok": True}
+
+
+@router.post("/account/test-mail")
+def test_mailbox(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    """Log in to the saved SMTP and IMAP servers, so mistakes show up now, not at send time."""
+    import imaplib
+    import smtplib
+    import ssl
+
+    cfg = tenant.config_for(db, me.id)
+    out = {"smtp": {"ok": False, "detail": "not set"}, "imap": {"ok": False, "detail": "not set"}}
+    if cfg.smtp_host:
+        try:
+            ctx = ssl.create_default_context()
+            if cfg.smtp_use_ssl or cfg.smtp_port == 465:
+                conn = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=20, context=ctx)
+            else:
+                conn = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=20)
+                conn.ehlo()
+                conn.starttls(context=ctx)
+            with conn:
+                if cfg.smtp_user:
+                    conn.login(cfg.smtp_user, cfg.smtp_pass)
+            out["smtp"] = {"ok": True, "detail": f"Logged in as {cfg.smtp_user or '(no login)'}"}
+        except Exception as exc:  # noqa: BLE001
+            out["smtp"] = {"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    if cfg.imap_ready:
+        try:
+            with imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port, timeout=20) as box:
+                box.login(cfg.imap_user or cfg.smtp_user, cfg.imap_pass or cfg.smtp_pass)
+            out["imap"] = {"ok": True, "detail": f"Logged in as {cfg.imap_user or cfg.smtp_user}"}
+        except Exception as exc:  # noqa: BLE001
+            out["imap"] = {"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    return out
+
+
+class PasswordIn(BaseModel):
+    current: str
+    new: str = Field(min_length=8, max_length=200)
+
+
+@router.post("/account/password")
+def change_password(payload: PasswordIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import User
+
+    user = db.get(User, me.id)
+    if me.is_admin:
+        raise HTTPException(400, "The admin password is set by ADMIN_PASSWORD on the server.")
+    if not auth.verify_password(user.password_hash, payload.current):
+        raise HTTPException(400, "Your current password is not correct.")
+    user.password_hash = auth.hash_password(payload.new)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Billing: trial, checkout, verification
+# ---------------------------------------------------------------------------
+
+
+def _unlock(db: Session, user_id: int, bot_key: str) -> None:
+    """After access is granted: a ready-made agent for that bot, scheduled."""
+    from app.scheduler import reschedule
+    from app.seed import starter_campaign
+
+    starter_campaign(db, user_id, bot_key)
+    db.commit()
+    reschedule()
+
+
+@router.get("/billing")
+def billing_overview(me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import Payment, Subscription, User
+
+    user = db.get(User, me.id)
+    subs = db.execute(select(Subscription).where(Subscription.user_id == me.id)
+                      .order_by(Subscription.created_at.desc()).limit(100)).scalars().all()
+    pays = db.execute(select(Payment).where(Payment.user_id == me.id)
+                      .order_by(Payment.created_at.desc()).limit(100)).scalars().all()
+    return {
+        "access": billing.access_map(db, me.id),
+        "bots": [billing.bot_json(b) for b in billing.catalog(db)],
+        "trial": {"used": bool(user.trial_started_at), "bot": user.trial_bot,
+                  "hours": settings.trial_hours},
+        "razorpay_ready": billing.razorpay_ready(),
+        "subscriptions": [{
+            "id": s.id, "bot": s.bot_key, "kind": s.kind, "period": s.period,
+            "currency": s.currency, "amount": s.amount,
+            "starts_at": as_aware(s.starts_at).isoformat(), "expires_at": as_aware(s.expires_at).isoformat(),
+            "revoked": s.revoked_at is not None, "note": s.note,
+        } for s in subs],
+        "payments": [{
+            "id": p.id, "bot": p.bot_key, "period": p.period, "currency": p.currency,
+            "amount": p.amount, "status": p.status, "order_id": p.order_id,
+            "payment_id": p.provider_payment_id,
+            "created_at": as_aware(p.created_at).isoformat() if p.created_at else None,
+            "paid_at": as_aware(p.paid_at).isoformat() if p.paid_at else None,
+        } for p in pays],
+    }
+
+
+class TrialIn(BaseModel):
+    bot: str
+
+
+@router.post("/billing/trial")
+def start_trial(payload: TrialIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import User
+
+    if me.is_admin:
+        raise HTTPException(400, "The admin already has every bot.")
+    user = db.get(User, me.id)
+    try:
+        sub = billing.start_trial(db, user, payload.bot)
+    except billing.TrialError as exc:
+        raise HTTPException(400, str(exc)) from None
+    db.commit()
+    _unlock(db, me.id, payload.bot)
+    return {"ok": True, "expires_at": as_aware(sub.expires_at).isoformat()}
+
+
+class CheckoutIn(BaseModel):
+    bot: str
+    period: str = "month"
+    currency: str = "INR"
+
+
+@router.post("/billing/checkout")
+def checkout(payload: CheckoutIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import User
+
+    if me.is_admin:
+        raise HTTPException(400, "The admin already has every bot.")
+    try:
+        order = billing.create_order(db, db.get(User, me.id), payload.bot,
+                                     payload.period, payload.currency.upper())
+    except billing.PaymentError as exc:
+        raise HTTPException(400, str(exc)) from None
+    db.commit()
+    return order
+
+
+class VerifyIn(BaseModel):
+    order_id: str
+    payment_id: str
+    signature: str
+
+
+@router.post("/billing/verify")
+def verify_payment(payload: VerifyIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import Payment
+
+    payment = db.execute(select(Payment).where(Payment.order_id == payload.order_id)).scalar_one_or_none()
+    if payment is None or payment.user_id != me.id:
+        raise HTTPException(404, "payment not found")
+    if not billing.checkout_signature_ok(payload.order_id, payload.payment_id, payload.signature):
+        raise HTTPException(400, "The payment could not be verified. If money was taken, "
+                                 "it will be confirmed automatically within a few minutes.")
+    sub = billing.fulfil(db, payload.order_id, payload.payment_id)
+    db.commit()
+    if sub is None:
+        raise HTTPException(400, "This payment could not be applied. Please contact support.")
+    _unlock(db, me.id, payment.bot_key)
+    return {"ok": True, "bot": payment.bot_key, "expires_at": as_aware(sub.expires_at).isoformat()}
+
+
+class FailedIn(BaseModel):
+    order_id: str
+    reason: str = ""
+
+
+@router.post("/billing/failed")
+def payment_failed(payload: FailedIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
+    from app.models import Payment
+
+    payment = db.execute(select(Payment).where(Payment.order_id == payload.order_id)).scalar_one_or_none()
+    if payment and payment.user_id == me.id and payment.status == "created":
+        payment.status, payment.error = "failed", (payload.reason or "")[:500]
+        db.commit()
+    return {"ok": True}
+
+
 # --- public, unauthenticated ----------------------------------------------
 
 public_router = APIRouter()
@@ -1156,7 +1574,8 @@ def unsubscribe(token: str, db: Session = Depends(get_db)):
         select(EmailMessage).where(EmailMessage.unsubscribe_token == token)
     ).scalar_one_or_none()
     if message:
-        suppress(db, message.to_email, "unsubscribed via email link")
+        # Unsubscribing is from the customer who sent this email.
+        suppress(db, message.to_email, "unsubscribed via email link", owner_id=message.owner_id)
         db.add(EmailEvent(message_id=message.id, type="unsubscribe", payload={}))
         lead = db.get(Lead, message.lead_id)
         if lead:
@@ -1172,3 +1591,46 @@ def unsubscribe(token: str, db: Session = Depends(get_db)):
         "<p>You won't receive any further emails from us. "
         "Sorry for the interruption.</p>"
     )
+
+
+@public_router.get("/api/public/bots")
+def public_bots(db: Session = Depends(get_db)):
+    return {
+        "platform": settings.platform_name,
+        "trial_hours": settings.trial_hours,
+        "bots": [billing.bot_json(b) for b in billing.catalog(db)],
+    }
+
+
+@public_router.post("/billing/razorpay/webhook")
+async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
+    """Razorpay's server-to-server confirmation. Covers the customer who pays
+    and closes the tab before the browser reports back."""
+    import json
+
+    body = await request.body()
+    if not billing.webhook_signature_ok(body, request.headers.get("X-Razorpay-Signature", "")):
+        raise HTTPException(400, "bad signature")
+    event = json.loads(body or b"{}")
+    kind = event.get("event", "")
+    entity = ((event.get("payload") or {}).get("payment") or {}).get("entity") or {}
+    order_id, payment_id = entity.get("order_id"), entity.get("id")
+    if not order_id:
+        return {"ok": True}
+    if kind in ("payment.captured", "order.paid"):
+        from app.models import Payment
+
+        sub = billing.fulfil(db, order_id, payment_id, entity.get("amount"), entity.get("currency"))
+        db.commit()
+        payment = db.execute(select(Payment).where(Payment.order_id == order_id)).scalar_one_or_none()
+        if sub is not None and payment is not None:
+            _unlock(db, payment.user_id, payment.bot_key)
+    elif kind == "payment.failed":
+        from app.models import Payment
+
+        payment = db.execute(select(Payment).where(Payment.order_id == order_id)).scalar_one_or_none()
+        if payment and payment.status == "created":
+            payment.status = "failed"
+            payment.error = (entity.get("error_description") or "")[:500]
+            db.commit()
+    return {"ok": True}

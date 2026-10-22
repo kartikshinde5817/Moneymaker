@@ -279,6 +279,45 @@ More campaigns die here than anywhere else.
 
 ---
 
+## Running it as a product
+
+The app is multi-customer. People sign up, try one bot free, and pay per bot.
+
+| Page | Who |
+|---|---|
+| `/` | Public landing page with live prices |
+| `/signup`, `/login` | Customers create accounts and sign in; you sign in with `ADMIN_EMAIL` |
+| `/app` | Each customer's own workspace: agents, outbox, leads, **My bots**, **Billing**, **Settings** |
+| `/app#admin` | Your admin panel: overview, customers, bots & pricing, payments |
+
+**Bots** are what customers buy — one per service (Web Development, Digital
+Marketing, AI Agents, AI Automation, Computer Vision, plus any you add under
+*Bots & pricing → New bot*). Each has INR and USD prices, monthly and yearly,
+editable in the admin panel.
+
+**Access** comes from a free trial (one per account, `TRIAL_HOURS`, any one
+bot), a paid plan, or days you grant a customer by hand. Plans are prepaid and
+simply end; renewing early adds time on top. When access ends, that bot's
+agents stop running until it is renewed.
+
+**Data is per customer.** Every customer has their own agents, leads, emails,
+unsubscribe list, mailbox and sender identity. Public facts about businesses
+(companies, their websites, the evidence found) are shared, so two customers
+prospecting the same business don't pay for the same research twice.
+
+**Payments** use Razorpay. Set `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`, then in
+the Razorpay dashboard add a webhook to
+`https://<your-app>/billing/razorpay/webhook` for `payment.captured` and
+`payment.failed`, with a secret you also put in `RAZORPAY_WEBHOOK_SECRET`.
+Every payment is verified on the server (checkout signature and webhook);
+the browser's word is never enough to unlock a bot.
+
+Set `SECRET_KEY` to a long random string before anyone saves a mailbox: it
+encrypts their mailbox passwords, and changing it later means they must
+re-enter them.
+
+---
+
 ## Configuration
 
 Copy `.env.example` to `.env`. Every value is optional; each one unlocks a

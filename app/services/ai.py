@@ -62,6 +62,10 @@ SERVICE_PITCH = {
         "AI workflow and business-process automation - lead qualification, "
         "document processing, internal AI tools and LLM integrations"
     ),
+    "digital_marketing": (
+        "digital marketing - SEO, Google Business and local search, social media "
+        "management, paid ads and analytics set-up"
+    ),
 }
 
 
@@ -333,6 +337,10 @@ OPENERS = {
     "tender_match": "I saw {name}'s published tender and wanted to get in touch.",
     "hiring_for_skill": "I saw that {name} is currently hiring in this area.",
     "recently_incorporated": "Congratulations on setting up {name}.",
+    "no_analytics": "I had a look at {name}'s website and couldn't find any analytics on it.",
+    "no_social_profiles": "I had a look at {name}'s website and it doesn't link to any social media profiles.",
+    "missing_meta_description": "I searched for {name} and noticed the website has no description set for search results.",
+    "weak_page_title": "I had a look at {name}'s website and noticed the page title doesn't describe the business.",
 }
 
 # One plain sentence on why the finding matters - general, never a claim about them.
@@ -349,6 +357,10 @@ WHY_IT_MATTERS = {
     "tender_match": "",
     "hiring_for_skill": "If it helps, we can take on the project while you find the right person.",
     "recently_incorporated": "A clear website is usually one of the first things a new business needs.",
+    "no_analytics": "Without it, there's no way to see where visitors come from or which marketing works.",
+    "no_social_profiles": "Many customers check a business's social pages before they get in touch.",
+    "missing_meta_description": "That snippet is often what decides whether someone clicks through.",
+    "weak_page_title": "The title is the first thing people see in search results, so it matters for clicks.",
 }
 
 CLOSERS = {
@@ -356,6 +368,7 @@ CLOSERS = {
     "computer_vision": "At {company} we build computer-vision systems - PPE and safety monitoring, fire and smoke detection, and quality inspection - that work with existing CCTV.",
     "ai_agent": "At {company} we build AI agents for chat, voice and WhatsApp that handle routine customer conversations.",
     "ai_automation": "At {company} we build AI automation that takes repetitive work off your team.",
+    "digital_marketing": "At {company} we help businesses like yours get found and chosen online - SEO, social media and ads, set up so you can see what's working.",
 }
 
 
@@ -395,6 +408,7 @@ def template_draft(
         "computer_vision": f"Camera-based safety monitoring for {company.name}",
         "ai_agent": f"An AI assistant for {company.name}'s customers",
         "ai_automation": f"Saving time on routine work at {company.name}",
+        "digital_marketing": f"A few quick wins for {company.name} online",
     }
     if service_category == "web_development" and chosen and chosen.signal_type in (
             "no_website", "parked_domain", "placeholder_site", "recently_incorporated"):

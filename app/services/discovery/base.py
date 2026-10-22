@@ -18,6 +18,7 @@ WEB = "web_development"
 CV = "computer_vision"
 AI_AGENT = "ai_agent"
 AI_AUTO = "ai_automation"
+DM = "digital_marketing"
 
 EXPLICIT = "explicit_request"
 INFERRED = "inferred_opportunity"
@@ -127,6 +128,11 @@ KEYWORD_GROUPS: dict[str, list[str]] = {
     AI_AUTO: [
         "AI automation", "workflow automation", "business process automation",
         "sales automation", "lead qualification automation", "LLM integration",
+    ],
+    DM: [
+        "digital marketing", "SEO", "social media marketing", "Google Ads",
+        "marketing agency", "social media manager", "PPC", "content marketing",
+        "local SEO",
     ],
 }
 

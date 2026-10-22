@@ -45,6 +45,10 @@ OPENERS = {
     "tender_match": "I saw {name}'s published tender",
     "hiring_for_skill": "I saw {name} is hiring in this area",
     "recently_incorporated": "I saw {name} was recently set up",
+    "no_analytics": "I noticed {name}'s website has no analytics on it",
+    "no_social_profiles": "I noticed {name}'s website doesn't link to any social media",
+    "missing_meta_description": "I noticed {name}'s website has no search description set",
+    "weak_page_title": "I noticed {name}'s website title doesn't describe the business",
 }
 
 CLOSERS = {
@@ -52,6 +56,7 @@ CLOSERS = {
     "computer_vision": "We build AI camera systems for safety and quality checks that run on existing CCTV. Worth a quick chat?",
     "ai_agent": "We build AI assistants that handle routine customer messages. Worth a quick chat?",
     "ai_automation": "We automate repetitive back-office work with AI. Worth a quick chat?",
+    "digital_marketing": "We help local businesses get found online - SEO, social media and ads. Worth a quick chat?",
 }
 
 
@@ -110,16 +115,17 @@ def queue(db: Session, lead: Lead, company: Company, signals: list[Signal], send
         return existing
     body, cited = compose(company, signals, lead.service_category, sender)
     message = WhatsAppMessage(
-        lead_id=lead.id, phone_e164=number, body=body, cited_signal_ids=cited,
+        owner_id=lead.owner_id, lead_id=lead.id, phone_e164=number, body=body,
+        cited_signal_ids=cited,
     )
     db.add(message)
     db.flush()
     return message
 
 
-def mark(db: Session, message_id: int, status: str) -> bool:
+def mark(db: Session, message_id: int, status: str, owner_id: int | None = None) -> bool:
     message = db.get(WhatsAppMessage, message_id)
-    if not message:
+    if not message or (owner_id is not None and message.owner_id != owner_id):
         return False
     message.status = status
     if status == "opened":

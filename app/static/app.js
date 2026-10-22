@@ -15,7 +15,7 @@ const FILTERS = { service: '', source: '', country: '', intent: '', status: '', 
 
 const SERVICE_LABEL = {
   web_development: 'Web Development', computer_vision: 'Computer Vision',
-  ai_agent: 'AI Agents', ai_automation: 'AI Automation',
+  ai_agent: 'AI Agents', ai_automation: 'AI Automation', digital_marketing: 'Digital Marketing',
 };
 const SOURCE_LABEL = {
   tender: 'Public tender', google_places: 'Google Places', companies_house: 'Companies House',
@@ -117,6 +117,7 @@ const fmtTime = s => !s ? '—' : new Date(s).toLocaleString(undefined, { day: '
 /* ---------------------------------------------------------------- shell */
 
 const NAV = [
+  { group: 'Workspace' },
   { key: 'workflow', label: 'Agent', icon: 'M5 3v4a2 2 0 002 2h3m4 0h3a2 2 0 002-2V3M5 21v-4a2 2 0 012-2h10a2 2 0 012 2v4M12 9v6' },
   { key: 'outbox', label: 'Outbox', icon: 'M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z' },
   { key: 'dashboard', label: 'Dashboard', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2' },
@@ -124,12 +125,24 @@ const NAV = [
   { key: 'whatsapp', label: 'WhatsApp', icon: 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z' },
   { key: 'leads', label: 'Leads', icon: 'M3 6h18M3 12h18M3 18h12' },
   { key: 'campaigns', label: 'Campaigns', icon: 'M12 2v4m0 12v4M2 12h4m12 0h4M6 6l3 3m6 6l3 3m0-12l-3 3m-6 6l-3 3' },
-  { key: 'settings', label: 'Settings', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h3m12 0h3M12 3v3m0 12v3' },
+  { group: 'Account' },
+  { key: 'bots', label: 'My bots', icon: 'M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.4 7.2 16.9l.9-5.4L4.2 7.7l5.4-.8L12 2z' },
+  { key: 'billing', label: 'Billing', icon: 'M2 7h20v12H2zM2 11h20M6 15h4' },
+  { key: 'account', label: 'Settings', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h3m12 0h3M12 3v3m0 12v3' },
+  { group: 'Admin', admin: true },
+  { key: 'admin', label: 'Overview', admin: true, icon: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z' },
+  { key: 'customers', label: 'Customers', admin: true, icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
+  { key: 'adminbots', label: 'Bots & pricing', admin: true, icon: 'M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L2 12V2h10l8.6 8.6a2 2 0 010 2.8zM7 7h.01' },
+  { key: 'payments', label: 'Payments', admin: true, icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6' },
+  { key: 'settings', label: 'Platform', admin: true, icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6' },
 ];
 
+const isAdmin = () => !!(META.user && META.user.role === 'admin');
+
 function renderNav(pending) {
-  $('#nav').innerHTML = NAV.map(n => `
-    <button data-v="${n.key}" class="${VIEW === n.key ? 'on' : ''}">
+  $('#nav').innerHTML = NAV.filter(n => !n.admin || isAdmin()).map(n => n.group
+    ? `<div class="grp">${esc(n.group)}</div>`
+    : `<button data-v="${n.key}" class="${VIEW === n.key ? 'on' : ''}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         stroke-linecap="round" stroke-linejoin="round"><path d="${n.icon}"/></svg>
       ${n.label}${n.key === 'outbox' && pending ? `<span class="pip">${pending}</span>` : ''}
@@ -139,6 +152,11 @@ function renderNav(pending) {
 
 function renderFoot() {
   const c = (ok, on, off) => `<span class="chip ${ok ? 'ok' : 'off'}"><span class="dot"></span>${ok ? on : off}</span>`;
+  if (!isAdmin()) {  // customers see only what concerns their own setup
+    $('#foot').innerHTML = c(META.email_ready, 'Mailbox connected', 'No mailbox') +
+      c(META.inbox_ready, 'Reply watch on', 'Replies not watched');
+    return;
+  }
   $('#foot').innerHTML =
     c(META.ai_ready, 'Claude AI on (paid)', 'Free mode') +
     (META.send_on_server === false ? c(true, 'Sends from your PC', '')
@@ -829,7 +847,9 @@ async function approve(id) {
     await patch(`/api/outbox/${id}`, { subject: $('#sub' + id).value, body: $('#bod' + id).value });
     const r = await post(`/api/outbox/${id}/approve?send_now=true`);
     if (r.ok) {
-      toast(r.status === 'sent' ? 'Sent' : 'Approved — your computer sender will send it', 'good');
+      toast(r.status === 'sent' ? 'Sent'
+        : r.detail && r.detail !== 'queued' ? 'Approved and queued. This server cannot send email, so start the sender on your computer.'
+        : 'Approved — your computer sender will send it', 'good');
       const c = $('#ob' + id); if (c) c.remove();
     }
     else toast(r.detail || 'Could not send', 'bad');
@@ -1107,6 +1127,7 @@ const SERVICE_ICON = {
   computer_vision: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
   ai_agent: NODE_ICONS.brain,
   ai_automation: NODE_ICONS.trigger,
+  digital_marketing: 'M3 11l18-8v18l-18-8zM11 13v6a2 2 0 01-4 0v-7',
 };
 const svcIcon = k => SERVICE_ICON[k] || NODE_ICONS.rocket;
 
@@ -1122,7 +1143,7 @@ VIEWS.campaigns = async function () {
          out through the dispatcher, which runs every 10 minutes.</p></div>
       <div class="row">
         <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
-        <button class="btn" onclick="openServices()">Services</button>
+        ${isAdmin() ? '<button class="btn" onclick="openServices()">Services</button>' : ''}
         ${META.send_on_server === false ? '' : '<button class="btn" onclick="dispatchNow()">Send queued now</button>'}
       </div>
     </div>
@@ -1151,7 +1172,7 @@ function campCard(c, i) {
          aria-label="Edit ${esc(c.name)}" style="--i:${i}">
       <div class="camp-top">
         <span class="camp-ico">${svgIcon(svcIcon(c.service_category), 18)}</span>
-        <div class="camp-name"><b>${esc(c.name)}</b><small>${esc(SERVICE_LABEL[c.service_category] || c.service_category)}</small></div>
+        <div class="camp-name"><b>${esc(c.name)}</b><small>${esc(SERVICE_LABEL[c.service_category] || c.service_category)}${c.locked ? ' · <span class="lockt">locked — subscription ended</span>' : ''}</small></div>
         <label class="sw" title="${c.enabled ? 'On — click to pause' : 'Paused — click to switch on'}">
           <input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCampaign(${c.id}, this.checked)" aria-label="Enabled"><i></i></label>
       </div>
@@ -1180,7 +1201,9 @@ function campCard(c, i) {
         <span class="sp"></span>
         <button class="btn sm ghost icon" onclick="deleteCampaign(${c.id})" title="Delete this campaign" aria-label="Delete ${esc(c.name)}">${svgIcon(NODE_ICONS.trash)}</button>
         <button class="btn sm" onclick="openCampaign(${c.id})">Edit</button>
-        ${c.running
+        ${c.locked
+          ? `<button class="btn sm primary" onclick="go('bots')">🔒 Unlock bot</button>`
+          : c.running
           ? `<button class="btn sm danger" ${c.stopping ? 'disabled' : ''} onclick="stopRun(${c.id})">${c.stopping ? '<span class="spin dark"></span> Stopping…' : '■ Stop'}</button>`
           : `<button class="btn sm primary" onclick="runCampaign(${c.id})">▶ Run now</button>`}
       </div>
@@ -1372,7 +1395,7 @@ async function openCampaign(id) {
     if (!c) { closeDrawer(); toast('That campaign no longer exists', 'bad'); return; }
   }
   _ce = c ? { ...c } : {
-    id: null, name: '', service_category: 'web_development', enabled: true,
+    id: null, name: '', service_category: (isAdmin() ? null : Object.keys(META.access || {})[0]) || 'web_development', enabled: true,
     schedule_time: '07:00', schedule_days: 'mon-fri', approval_mode: 'manual',
     countries: ['GB', 'US'], rotate_cities: true, locations: [], keywords: [], sources: [],
     min_score: 55, daily_lead_limit: 25, daily_email_limit: 20,
@@ -1403,10 +1426,12 @@ function paintCampaignEditor() {
       <div class="grid2">
         <div class="inp"><label for="ceName">Name</label>
           <input id="ceName" value="${esc(c.name)}" maxlength="120" placeholder="e.g. UK restaurants — websites"></div>
-        <div class="inp"><label for="ceService" class="lbl-row">Service it sells
-            <button type="button" class="linkbtn" onclick="serviceFromEditor(null)">＋ Add new service</button></label>
-          <select id="ceService">${(META.services || []).map(s =>
-            `<option value="${esc(s.key)}" ${s.key === c.service_category ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></div>
+        <div class="inp"><label for="ceService" class="lbl-row">Bot (service it sells)
+            ${isAdmin() ? '<button type="button" class="linkbtn" onclick="serviceFromEditor(null)">＋ Add new service</button>' : '<a class="linkbtn" href="#bots" onclick="closeDrawer()">Get more bots</a>'}</label>
+          <select id="ceService">${(META.services || []).map(s => {
+            const open = isAdmin() || (META.access || {})[s.key] || s.key === c.service_category;
+            return `<option value="${esc(s.key)}" ${s.key === c.service_category ? 'selected' : ''} ${open ? '' : 'disabled'}>${esc(s.label)}${open ? '' : ' — locked'}</option>`;
+          }).join('')}</select></div>
       </div>
       <div class="svc-hint" id="ceSvcHint"></div>
       <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceEnabled" ${c.enabled ? 'checked' : ''}><i></i></span>
@@ -1625,16 +1650,16 @@ async function showRun(runId) {
 /* -------------------------------------------------------------- settings */
 
 VIEWS.settings = async function () {
-  const [s, sup, boxes, sched, me] = await Promise.all([
-    api('/api/settings'), api('/api/suppressions'), api('/api/mailboxes'), api('/api/scheduler'),
-    api('/auth/me'),
+  if (!isAdmin()) return go('account');  // server-wide settings are the admin's
+  const [s, boxes, sched, me] = await Promise.all([
+    api('/api/settings'), api('/api/mailboxes'), api('/api/scheduler'), api('/auth/me'),
   ]);
   const yn = v => v ? '<span class="pill sent">configured</span>' : '<span class="pill rejected">not set</span>';
 
   $('#view').innerHTML = `
-    <div class="head"><div><h2>Settings</h2>
-      <p>Secrets live in the <code>.env</code> file, never in the database. Edit that file
-         and restart to change them.</p></div></div>
+    <div class="head"><div><h2>Platform</h2>
+      <p>Server-wide configuration. Secrets live in the environment (Render's Environment
+         tab or <code>.env</code>), never in the database; change them there and restart.</p></div></div>
 
     <div class="card"><h3>Security</h3>
       <p class="hint">Password sign-in${me.login_required ? '' : ' is off — set ADMIN_PASSWORD in .env before putting this online'}.</p>
@@ -1645,7 +1670,7 @@ VIEWS.settings = async function () {
           <b class="mono">${me.totp_required ? 'not finished' : 'on'}</b></div>` : ''}
       </div>
       ${me.login_required ? `<div class="save-row">
-        ${me.totp_required ? `<button class="btn" onclick="location.href='/auth/login-page'">Finish 2FA setup</button>`
+        ${me.totp_required ? `<button class="btn" onclick="location.href='/login'">Finish 2FA setup</button>`
           : `<button class="btn danger" id="disable2fa">Disable 2FA</button>`}
         <button class="btn" id="logoutBtn">Log out</button>
         <button class="btn ghost" id="logoutAllBtn">Log out everywhere</button>
@@ -1676,9 +1701,10 @@ VIEWS.settings = async function () {
       </div>
     </div>
 
-    <div class="card"><h3>Sender identity</h3>
-      <p class="hint">A real postal address is legally required in every marketing email
-         sent to the United States. The app refuses to send without one.</p>
+    <div class="card"><h3>Server defaults for your own sending</h3>
+      <p class="hint">These come from the server's environment and are used for your admin
+         account until you set your own in <a href="#account">Settings</a>. Customers always
+         use the mailbox and identity they connect themselves.</p>
       <div class="grid2">
         ${[['Company name', s.company_name], ['Sender name', s.sender_name],
            ['Sender email', s.sender_email], ['Portfolio URL', s.portfolio_url],
@@ -1708,20 +1734,6 @@ VIEWS.settings = async function () {
         <code style="font-size:12px">${esc(j.id)}</code><span class="sp"></span>
         <span class="muted">next ${j.next_run ? fmtTime(j.next_run) : '—'}</span></div>`).join('')
       : '<p class="hint" style="margin:0">Scheduler is off.</p>'}
-    </div>
-
-    <div class="card"><h3>Suppression list <span class="muted" style="font-weight:400;font-size:12px">(${sup.length})</span></h3>
-      <p class="hint">Anyone who unsubscribes or hard-bounces lands here permanently and is
-         checked before every single send, even if they are rediscovered later.</p>
-      <div class="row" style="margin-bottom:10px">
-        <input id="supVal" placeholder="email@example.com or example.com" style="flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 11px">
-        <select id="supScope" style="border:1px solid var(--line);border-radius:8px;padding:8px"><option value="email">Email</option><option value="domain">Domain</option></select>
-        <button class="btn" id="supAdd">Add</button>
-      </div>
-      ${sup.slice(0, 40).map(x => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line);font-size:12.5px">
-        <span class="tag grey">${esc(x.scope)}</span><span class="mono">${esc(x.value)}</span>
-        <span class="muted">${esc(x.reason)}</span><span class="sp"></span>
-        <button class="btn sm ghost" onclick="rmSup(${x.id})">remove</button></div>`).join('')}
     </div>
 
     <div class="card"><h3>Where email is permitted</h3>
@@ -1770,19 +1782,12 @@ VIEWS.settings = async function () {
     };
   } catch (e) { $('#freeKeys').innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
 
-  $('#supAdd').onclick = async () => {
-    const value = $('#supVal').value.trim();
-    if (!value) return;
-    try { await post('/api/suppressions', { value, scope: $('#supScope').value, reason: 'added manually' }); toast('Added', 'good'); VIEWS.settings(); }
-    catch (e) { toast(e.message, 'bad'); }
-  };
-
   if ($('#logoutBtn')) $('#logoutBtn').onclick = async () => {
-    await post('/auth/logout'); location.href = '/auth/login-page';
+    await post('/auth/logout'); location.href = '/login';
   };
   if ($('#logoutAllBtn')) $('#logoutAllBtn').onclick = async () => {
     if (!confirm('Log out every signed-in device?')) return;
-    await api('/auth/logout-everywhere'); location.href = '/auth/login-page';
+    await api('/auth/logout-everywhere'); location.href = '/login';
   };
   if ($('#disable2fa')) $('#disable2fa').onclick = async () => {
     if (!confirm('Turn off Google Authenticator? Only the password will be needed to sign in.')) return;
@@ -1792,23 +1797,9 @@ VIEWS.settings = async function () {
 };
 
 async function rmSup(id) {
-  try { await api('/api/suppressions/' + id, { method: 'DELETE' }); VIEWS.settings(); }
+  try { await api('/api/suppressions/' + id, { method: 'DELETE' }); VIEWS[VIEW](); }
   catch (e) { toast(e.message, 'bad'); }
 }
 
 /* ------------------------------------------------------------------ boot */
-
-(async () => {
-  try {
-    META = await api('/api/meta');
-    syncServices();
-    const s = await api('/api/stats/summary');
-    window._pending = s.pending_approval;
-  } catch (e) {
-    $('#view').innerHTML = `<div class="banner bad">Could not reach the API: ${esc(e.message)}</div>`;
-    return;
-  }
-  renderFoot();
-  const hash = (location.hash || '').replace('#', '');
-  go(VIEWS[hash] ? hash : 'workflow');
-})();
+/* Startup lives at the end of product.js, which loads after this file. */

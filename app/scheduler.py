@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import session_scope
-from app.models import Campaign
+from app.models import AccountSettings, Campaign, User
 from app.services import inbox, pipeline
 
 log = logging.getLogger(__name__)
@@ -47,6 +47,10 @@ def _run(campaign_id: int) -> None:
     try:
         with session_scope() as db:
             campaign = db.get(Campaign, campaign_id)
+            owner = db.get(User, campaign.owner_id) if campaign and campaign.owner_id else None
+            if owner is not None and owner.status != "active":
+                log.info("campaign %s skipped: owner account is %s", campaign_id, owner.status)
+                return
             if campaign and campaign.enabled:
                 pipeline.run_campaign(db, campaign, trigger="scheduled")
     except Exception:
@@ -59,11 +63,9 @@ def _run(campaign_id: int) -> None:
 def _poll_inbox() -> None:
     """Replies, bounces and opt-outs. Runs often - a follow-up sent after
     somebody already answered is the worst outcome this system can produce."""
-    if not inbox.ready():
-        return
     try:
         with session_scope() as db:
-            result = inbox.poll(db)
+            result = inbox.poll_all(db)
             if result.get("replies") or result.get("bounces") or result.get("unsubscribes"):
                 log.info("inbox: %s", result)
     except Exception:
@@ -82,13 +84,25 @@ def _dispatch() -> None:
         log.exception("dispatcher failed")
 
 
-def _trigger(c: Campaign) -> CronTrigger:
+def _trigger(c: Campaign, timezone: str | None = None) -> CronTrigger:
+    """Fires at the campaign's time in its owner's own timezone."""
     hour, minute = (c.schedule_time or "07:00").split(":")
-    return CronTrigger(
-        hour=int(hour), minute=int(minute),
-        day_of_week=DAY_MAP.get(c.schedule_days, "mon-fri"),
-        timezone=settings.scheduler_timezone,
-    )
+    try:
+        return CronTrigger(
+            hour=int(hour), minute=int(minute),
+            day_of_week=DAY_MAP.get(c.schedule_days, "mon-fri"),
+            timezone=timezone or settings.scheduler_timezone,
+        )
+    except Exception:  # noqa: BLE001 - an unknown timezone falls back to the platform's
+        return CronTrigger(hour=int(hour), minute=int(minute),
+                           day_of_week=DAY_MAP.get(c.schedule_days, "mon-fri"),
+                           timezone=settings.scheduler_timezone)
+
+
+def _timezones(db: Session) -> dict[int, str]:
+    return {o: tz for o, tz in db.execute(
+        select(AccountSettings.owner_id, AccountSettings.timezone)
+        .where(AccountSettings.timezone.isnot(None))).all() if tz}
 
 
 def upcoming(db: Session, campaigns: list[Campaign] | None = None) -> list[dict]:
@@ -100,13 +114,14 @@ def upcoming(db: Session, campaigns: list[Campaign] | None = None) -> list[dict]
     """
     if campaigns is None:
         campaigns = db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars().all()
+    zones = _timezones(db)
     out = []
     for c in (c for c in campaigns if c.enabled):
         job = _scheduler.get_job(f"campaign:{c.id}") if _scheduler else None
         at = job.next_run_time if job else None
         if at is None:
             try:
-                trigger = _trigger(c)
+                trigger = _trigger(c, zones.get(c.owner_id))
                 at = trigger.get_next_fire_time(None, dt.datetime.now(trigger.timezone))
             except (ValueError, TypeError):
                 continue
@@ -129,10 +144,11 @@ def reschedule() -> None:
             job.remove()
     with session_scope() as db:
         campaigns = db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars().all()
+        zones = _timezones(db)
         for c in campaigns:
             try:
                 _scheduler.add_job(
-                    _run, _trigger(c),
+                    _run, _trigger(c, zones.get(c.owner_id)),
                     id=f"campaign:{c.id}", args=[c.id],
                     replace_existing=True, misfire_grace_time=3600,
                     coalesce=True, max_instances=1,

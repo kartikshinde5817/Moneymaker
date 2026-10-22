@@ -19,6 +19,7 @@ from app.services.discovery.base import EXPLICIT, INFERRED
 from app.services.research.audit import APPOINTMENT, HOSPITALITY, RETAIL, Audit
 
 WEB = "web_development"
+DM = "digital_marketing"
 
 
 def get_or_create_source(
@@ -170,6 +171,44 @@ def signals_from_audit(
         add("slow_site",
             f"{url} took {audit.ttfb_ms} ms to send its first byte.")
 
+    made += _marketing_signals(db, company, source, audit, url)
+    return made
+
+
+GENERIC_TITLES = {"home", "homepage", "home page", "welcome", "index", "untitled",
+                  "my site", "my website", "website", "new page"}
+
+
+def _marketing_signals(db: Session, company: Company, source, audit: Audit, url: str) -> list[Signal]:
+    """Gaps a marketing agency can fix, each one directly observable in the page."""
+    made: list[Signal] = []
+
+    def add(stype: str, quote: str):
+        s = record_signal(db, company, source, signal_type=stype, quote=quote,
+                          service_category=DM)
+        if s:
+            made.append(s)
+
+    tech = audit.tech or {}
+    if not any(tech.get(k) for k in ("google_analytics_legacy", "google_analytics_4",
+                                     "google_tag_manager")):
+        add("no_analytics",
+            f"{url} has no Google Analytics or Tag Manager code, so visits to the "
+            f"site are not being measured.")
+    if not audit.social:
+        add("no_social_profiles",
+            f"{url} does not link to any social media profile (Facebook, Instagram, "
+            f"LinkedIn, X or YouTube).")
+    if not (audit.meta_description or "").strip():
+        add("missing_meta_description",
+            f"{url} has no meta description, so search engines pick their own text "
+            f"to show under the result.")
+    title = (audit.title or "").strip()
+    if not title or title.lower() in GENERIC_TITLES or len(title) < 12:
+        shown = f'"{title}"' if title else "empty"
+        add("weak_page_title",
+            f"The page title of {url} is {shown}, which says nothing about the "
+            f"business to someone searching.")
     return made
 
 
