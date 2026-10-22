@@ -76,7 +76,11 @@ def _page(name: str) -> HTMLResponse:
     if not page.exists():
         return HTMLResponse(f"<h1>{settings.platform_name}</h1><p>Page assets are missing.</p>", 500)
     html = page.read_text(encoding="utf-8").replace("{{PLATFORM}}", settings.platform_name)
-    return HTMLResponse(html)
+    for asset in ("app.js", "product.js"):  # version the script URLs so a deploy never serves stale JS
+        f = STATIC_DIR / asset
+        if f.exists():
+            html = html.replace(f'/static/{asset}"', f'/static/{asset}?v={int(f.stat().st_mtime)}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
