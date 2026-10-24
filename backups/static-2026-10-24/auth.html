@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PLATFORM}} — sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#0B1220;--muted:#5B6878;--line:#E3E8EE;--bg:#F7F9FB;--brand:#0E7490;--brand-2:#06B6D4;--good:#0E9F6E;--warn:#DC2626}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);min-height:100vh;display:grid;grid-template-columns:1fr 1fr}
+@media (max-width:900px){body{grid-template-columns:1fr}.brand{display:none!important}}
+h1,h2{font-family:'Space Grotesk',sans-serif;letter-spacing:-.02em;margin:0}
+a{color:var(--brand)}
+.brand{position:relative;overflow:hidden;background:var(--ink);color:#E8EEF4;padding:48px 56px;display:flex;flex-direction:column}
+.brand::before{content:'';position:absolute;inset:0;background:radial-gradient(520px 300px at 85% 0%,rgba(6,182,212,.28),transparent 70%),radial-gradient(460px 280px at 0% 100%,rgba(14,116,144,.3),transparent 70%)}
+.brand>*{position:relative}
+.logo{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;font-size:20px;color:#fff;text-decoration:none}
+.logo i{width:32px;height:32px;border-radius:9px;background:#fff;color:var(--ink);display:grid;place-items:center;font-style:normal}
+.brand h2{font-size:36px;line-height:1.15;margin:auto 0 18px;max-width:14em}
+.brand p{color:#A9B6C4;max-width:30em;margin:0 0 30px;font-size:16px;line-height:1.6}
+.points{display:grid;gap:14px;margin-bottom:auto}
+.points div{display:flex;gap:12px;align-items:flex-start;font-size:15px}
+.points b{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);display:grid;place-items:center;color:#5EEAD4;flex-shrink:0;font-size:13px}
+.quote{margin-top:40px;padding:18px 20px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);font-size:14.5px;color:#C9D4DE}
+.quote small{display:block;color:#7E8D9C;margin-top:8px}
+main{display:flex;align-items:center;justify-content:center;padding:40px 24px}
+.card{width:100%;max-width:420px}
+.card .mlogo{display:none}
+@media (max-width:900px){.card .mlogo{display:flex;margin-bottom:28px;color:var(--ink)}.card .mlogo i{background:var(--ink);color:#fff}}
+.card h1{font-size:30px}
+.card .sub{color:var(--muted);margin:8px 0 28px;font-size:15px}
+label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+input{width:100%;border:1px solid var(--line);border-radius:11px;padding:12px 14px;font-size:15px;background:#fff;margin-bottom:16px;font-family:inherit;transition:border-color .15s,box-shadow .15s}
+input:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 4px rgba(6,182,212,.15)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button.main{width:100%;background:var(--ink);color:#fff;border:0;border-radius:11px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;justify-content:center;align-items:center;gap:8px;transition:background .15s}
+button.main:hover{background:#1A2536}
+button.main:disabled{opacity:.6;cursor:wait}
+.err{background:#FEF2F2;border:1px solid #FBD5D5;color:#9B1C1C;border-radius:10px;padding:10px 12px;font-size:13.5px;margin:-4px 0 16px;display:none}
+.info{background:#ECFDF5;border:1px solid #BBF7D0;color:#065F46;border-radius:10px;padding:10px 12px;font-size:13.5px;margin-bottom:16px;display:none}
+.switch{text-align:center;color:var(--muted);font-size:14px;margin-top:22px}
+.fine{color:var(--muted);font-size:12.5px;margin:-8px 0 16px}
+.step{display:none}.step.on{display:block}
+.qr{text-align:center;margin:6px 0 16px}.qr img{border:1px solid var(--line);border-radius:10px}
+.secret{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;word-break:break-all;margin-bottom:14px;text-align:center}
+.trialpill{display:inline-flex;gap:8px;align-items:center;background:#E0F4F8;color:var(--brand);border:1px solid #C3E8F0;border-radius:30px;padding:6px 12px;font-size:13px;font-weight:600;margin-bottom:18px}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<aside class="brand">
+  <a class="logo" href="/"><i>₹</i>{{PLATFORM}}</a>
+  <h2>Leads with proof, not lists.</h2>
+  <p>Bots that find businesses with a provable need for what you sell, and write the email that proves it.</p>
+  <div class="points">
+    <div><b>✓</b><span>Free 1-day trial on any bot. No card needed.</span></div>
+    <div><b>✓</b><span>Evidence beside every lead and every claim.</span></div>
+    <div><b>✓</b><span>Sends from your own mailbox, on your schedule.</span></div>
+  </div>
+  <div class="quote"><small style="margin:0 0 8px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:#5EEAD4">Example of what a bot records</small>
+    <b style="color:#fff">Bella Napoli Pizzeria · Leeds</b> — “bellanapoli.co.uk has no mobile viewport tag, so it does not adapt to phone screens.”
+    <small>Every lead comes with evidence like this, and a link to check it.</small></div>
+</aside>
+
+<main><div class="card">
+  <a class="logo mlogo" href="/"><i>₹</i>{{PLATFORM}}</a>
+
+  <div id="stepLogin" class="step">
+    <h1>Welcome back</h1>
+    <p class="sub">Sign in to your dashboard.</p>
+    <div class="info" id="infoLogin"></div>
+    <div class="err" id="errLogin"></div>
+    <label for="lEmail">Email</label>
+    <input id="lEmail" type="email" autocomplete="email" placeholder="you@company.com">
+    <label for="lPw">Password</label>
+    <input id="lPw" type="password" autocomplete="current-password" placeholder="••••••••">
+    <button class="main" id="goLogin">Sign in</button>
+    <div class="switch">New here? <a href="/signup">Create an account</a></div>
+  </div>
+
+  <div id="stepSignup" class="step">
+    <span class="trialpill" id="trialPill">✦ Includes a free 1-day trial</span>
+    <h1>Create your account</h1>
+    <p class="sub">Start finding clients in minutes.</p>
+    <div class="err" id="errSignup"></div>
+    <div class="row2">
+      <div><label for="sName">Your name</label><input id="sName" autocomplete="name" placeholder="Asha Mehta"></div>
+      <div><label for="sCompany">Company <span style="color:var(--muted);font-weight:400">(optional)</span></label><input id="sCompany" autocomplete="organization" placeholder="Mehta Digital"></div>
+    </div>
+    <label for="sEmail">Work email</label>
+    <input id="sEmail" type="email" autocomplete="email" placeholder="you@company.com">
+    <label for="sPw">Password</label>
+    <input id="sPw" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+    <button class="main" id="goSignup">Create account</button>
+    <div class="switch">Already have an account? <a href="/login">Sign in</a></div>
+  </div>
+
+  <div id="stepTotp" class="step">
+    <h1>Verification code</h1>
+    <p class="sub">Enter the 6-digit code from Google Authenticator.</p>
+    <div class="err" id="errCode"></div>
+    <label for="code">Code</label>
+    <input id="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code">
+    <button class="main" id="goCode">Verify</button>
+  </div>
+
+  <div id="stepSetup" class="step">
+    <h1>Secure your admin account</h1>
+    <p class="sub">Scan this with Google Authenticator (or Authy / 1Password), then enter the code it shows.</p>
+    <div class="qr"><img id="qrImg" width="200" height="200" alt="2FA QR code"></div>
+    <div class="secret" id="qrSecret"></div>
+    <div class="err" id="errConfirm"></div>
+    <label for="confirmCode">Code from the app</label>
+    <input id="confirmCode" inputmode="numeric" pattern="[0-9]*" maxlength="6">
+    <button class="main" id="goConfirm">Confirm &amp; continue</button>
+  </div>
+</div></main>
+
+<script>
+const $ = s => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+let EMAIL = '', PW = '';
+function show(id) { document.querySelectorAll('.step').forEach(s => s.classList.remove('on')); $('#' + id).classList.add('on'); }
+function err(id, msg) { const e = $(id); e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; }
+async function busy(btn, fn) {
+  const label = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  try { await fn(); } finally { btn.disabled = false; btn.innerHTML = label; }
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let d = {}; try { d = await r.json(); } catch (e) { /* empty */ }
+  if (!r.ok) {
+    const m = Array.isArray(d.detail) ? d.detail.map(x => String(x.msg).replace(/^Value error, /, '')).join('; ') : d.detail;
+    throw new Error(m || 'Something went wrong');
+  }
+  return d;
+}
+function home(role) {
+  const bot = params.get('bot');
+  if (bot) { try { localStorage.setItem('mm_pending_trial', bot); } catch (e) { /* private mode */ } }
+  location.href = role === 'admin' ? '/app#admin' : (bot ? '/app#bots' : '/app');
+}
+
+// --- sign in ---
+$('#goLogin').onclick = () => busy($('#goLogin'), async () => {
+  err('#errLogin');
+  EMAIL = $('#lEmail').value.trim(); PW = $('#lPw').value;
+  if (!EMAIL || !PW) return err('#errLogin', 'Enter your email and password.');
+  try {
+    const d = await postJSON('/auth/login', { email: EMAIL, password: PW });
+    if (d.needs_totp) { show('stepTotp'); $('#code').focus(); }
+    else if (d.needs_setup) { await loadQr(); show('stepSetup'); }
+    else home(d.role);
+  } catch (e) { err('#errLogin', e.message); }
+});
+['#lEmail', '#lPw'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goLogin').click(); }));
+
+// --- sign up ---
+$('#goSignup').onclick = () => busy($('#goSignup'), async () => {
+  err('#errSignup');
+  const body = { name: $('#sName').value.trim(), company: $('#sCompany').value.trim(),
+                 email: $('#sEmail').value.trim(), password: $('#sPw').value };
+  if (body.name.length < 2) return err('#errSignup', 'Please enter your name.');
+  if (!/^\S+@\S+\.\S+$/.test(body.email)) return err('#errSignup', 'Please enter a valid email address.');
+  if (body.password.length < 8) return err('#errSignup', 'Use a password of at least 8 characters.');
+  try { const d = await postJSON('/auth/signup', body); home(d.role); }
+  catch (e) { err('#errSignup', e.message); }
+});
+['#sName', '#sCompany', '#sEmail', '#sPw'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goSignup').click(); }));
+
+// --- admin 2FA ---
+$('#goCode').onclick = () => busy($('#goCode'), async () => {
+  err('#errCode');
+  try { const d = await postJSON('/auth/totp/verify', { email: EMAIL, password: PW, code: $('#code').value }); home(d.role); }
+  catch (e) { err('#errCode', e.message); }
+});
+$('#code').addEventListener('keydown', e => { if (e.key === 'Enter') $('#goCode').click(); });
+async function loadQr() {
+  const r = await fetch('/auth/totp/qr');
+  const secret = r.headers.get('X-TOTP-Secret') || '';
+  $('#qrSecret').textContent = secret ? "Can't scan? Enter manually: " + secret : '';
+  $('#qrImg').src = URL.createObjectURL(await r.blob());
+}
+$('#goConfirm').onclick = () => busy($('#goConfirm'), async () => {
+  err('#errConfirm');
+  try { await postJSON('/auth/totp/confirm', { code: $('#confirmCode').value }); home('admin'); }
+  catch (e) { err('#errConfirm', e.message); }
+});
+$('#confirmCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#goConfirm').click(); });
+
+// --- which page ---
+(async () => {
+  if (params.get('suspended')) { const i = $('#infoLogin'); i.textContent = 'This account is suspended. Please contact support.'; i.style.display = 'block'; i.style.background = '#FEF2F2'; i.style.color = '#9B1C1C'; i.style.borderColor = '#FBD5D5'; }
+  const signup = location.pathname.startsWith('/signup');
+  show(signup ? 'stepSignup' : 'stepLogin');
+  (signup ? $('#sName') : $('#lEmail')).focus();
+  try {
+    const me = await (await fetch('/auth/me')).json();
+    if (me.authenticated && me.login_required && !me.totp_required) location.href = me.role === 'admin' ? '/app#admin' : '/app';
+    else if (me.authenticated && me.totp_required) { await loadQr(); show('stepSetup'); }
+  } catch (e) { /* stay */ }
+})();
+</script>
+</body>
+</html>

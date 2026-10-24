@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PLATFORM}} — leads with proof, not lists</title>
+<meta name="description" content="AI bots that find businesses with a provable need for your services, and draft the email that proves it. Start a free 1-day trial.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#0B1220;--ink-2:#1F2A37;--muted:#5B6878;--line:#E3E8EE;--bg:#F7F9FB;--panel:#fff;
+  --brand:#0E7490;--brand-2:#06B6D4;--good:#0E9F6E;--warn:#DC2626;--r:16px}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);font-size:16px;line-height:1.6}
+a{color:inherit;text-decoration:none}
+h1,h2,h3{font-family:'Space Grotesk',sans-serif;letter-spacing:-.02em;margin:0}
+.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;padding:12px 20px;font-weight:600;font-size:15px;border:1px solid transparent;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s;font-family:inherit}
+.btn:hover{transform:translateY(-1px)}
+.btn.primary{background:var(--ink);color:#fff;box-shadow:0 10px 24px -12px rgba(11,18,32,.6)}
+.btn.primary:hover{background:#1A2536}
+.btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+.btn.ghost:hover{border-color:#C7D1DB}
+.btn.sm{padding:9px 15px;font-size:14px;border-radius:10px}
+
+/* nav */
+nav.top{position:sticky;top:0;z-index:50;background:rgba(247,249,251,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid transparent;transition:border-color .2s}
+nav.top.scrolled{border-bottom-color:var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:28px;height:68px}
+.logo{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:19px}
+.logo i{width:30px;height:30px;border-radius:9px;background:var(--ink);display:grid;place-items:center;color:#5EEAD4;font-style:normal;font-size:16px}
+nav.top .links{display:flex;gap:24px;font-size:14.5px;color:var(--muted);font-weight:500}
+nav.top .links a:hover{color:var(--ink)}
+nav.top .sp{flex:1}
+@media (max-width:820px){nav.top .links{display:none}}
+@media (max-width:560px){nav.top #navAuth .ghost{display:none}.logo{white-space:nowrap;font-size:17px}nav.top .wrap{gap:12px}}
+
+/* hero */
+.hero{position:relative;overflow:hidden;padding:76px 0 90px}
+.hero::before{content:'';position:absolute;inset:0;z-index:-1;
+  background:radial-gradient(700px 380px at 85% 10%,rgba(6,182,212,.14),transparent 70%),radial-gradient(600px 340px at 5% 90%,rgba(14,116,144,.10),transparent 70%)}
+.hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+@media (max-width:960px){.hero .wrap{grid-template-columns:1fr}.hero{padding:44px 0 60px}}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--brand);background:#E0F4F8;border:1px solid #C3E8F0;padding:6px 12px;border-radius:30px}
+.eyebrow b{width:7px;height:7px;border-radius:50%;background:var(--brand-2);box-shadow:0 0 0 4px rgba(6,182,212,.2)}
+.hero h1{font-size:clamp(38px,5.4vw,62px);line-height:1.04;margin:20px 0 18px}
+.hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--brand),var(--brand-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{font-size:18.5px;color:var(--muted);max-width:34em;margin:0 0 28px}
+.hero .ctas{display:flex;gap:12px;flex-wrap:wrap}
+.hero .note{font-size:13.5px;color:var(--muted);margin-top:14px;display:flex;gap:18px;flex-wrap:wrap}
+.hero .note span::before{content:'✓ ';color:var(--good);font-weight:700}
+
+/* hero visual */
+.visual{position:relative}
+.mock{background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:0 40px 80px -40px rgba(11,18,32,.35);padding:22px;position:relative;z-index:2}
+.mock .bar{display:flex;gap:6px;margin-bottom:16px}.mock .bar i{width:10px;height:10px;border-radius:50%;background:#E3E8EE}
+.lead-head{display:flex;align-items:center;gap:12px}
+.score{width:46px;height:46px;border-radius:13px;background:#FEF3E2;color:#B45309;font-family:'Space Grotesk';font-weight:700;font-size:19px;display:grid;place-items:center}
+.lead-head b{font-size:16px;display:block}.lead-head small{color:var(--muted);font-size:13px}
+.ev{margin-top:14px;border:1px solid var(--line);border-left:3px solid #F59E0B;background:#FFFBF3;border-radius:10px;padding:11px 13px;font-size:13.5px}
+.ev .t{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#92400E;margin-bottom:3px}
+.ev.b{border-left-color:var(--brand-2);background:#F2FBFD}.ev.b .t{color:var(--brand)}
+.draft{margin-top:14px;background:var(--bg);border-radius:12px;padding:13px 14px;font-size:13.5px;color:var(--ink-2)}
+.draft .s{font-weight:600;margin-bottom:5px}
+.draft mark{background:#FDE7B0;border-radius:3px;padding:0 2px}
+.mock .actions{display:flex;gap:8px;margin-top:14px}
+.chip-float{position:absolute;z-index:3;background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 14px;box-shadow:0 20px 40px -20px rgba(11,18,32,.35);font-size:13px;display:flex;align-items:center;gap:10px;animation:float 6s ease-in-out infinite}
+.chip-float b{font-family:'Space Grotesk';font-size:18px}
+.chip-float .dot{width:9px;height:9px;border-radius:50%;background:var(--good);box-shadow:0 0 0 4px rgba(14,159,110,.15)}
+.cf1{top:-20px;right:-14px}.cf2{bottom:-44px;left:-30px;animation-delay:-3s}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@media (max-width:960px){.cf2{left:-6px}.cf1{right:-4px}}
+
+/* sections */
+section{padding:84px 0}
+.sec-head{text-align:center;max-width:680px;margin:0 auto 46px}
+.sec-head .k{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--brand)}
+.sec-head h2{font-size:clamp(28px,3.6vw,40px);margin:10px 0 12px;line-height:1.15;text-wrap:balance}
+.sec-head p{color:var(--muted);margin:0;font-size:17px}
+.trust{padding:26px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#fff}
+.trust .wrap{display:flex;justify-content:space-around;gap:20px;flex-wrap:wrap;font-size:14px;color:var(--muted);font-weight:500}
+.trust b{color:var(--ink)}
+
+.botgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:18px}
+.bot{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:24px;display:flex;flex-direction:column;transition:transform .2s,box-shadow .2s}
+.bot:hover{transform:translateY(-4px);box-shadow:0 24px 50px -30px rgba(11,18,32,.4)}
+.bot .ico{width:46px;height:46px;border-radius:13px;background:var(--ink);color:#fff;display:grid;place-items:center}
+.bot h3{font-size:20px;margin:16px 0 6px}
+.bot p{color:var(--muted);margin:0 0 14px;font-size:15px}
+.bot ul{list-style:none;padding:0;margin:0 0 18px;display:grid;gap:7px;font-size:14px}
+.bot li::before{content:'✓';color:var(--good);font-weight:700;margin-right:8px}
+.bot .from{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:baseline;gap:6px;font-size:14px;color:var(--muted)}
+.bot .from b{font-family:'Space Grotesk';font-size:22px;color:var(--ink)}
+
+/* how it works: the daily loop, drawn as a clock */
+.cycle{--D:24s;position:relative;width:min(100%,780px);aspect-ratio:1;margin:0 auto}
+.cy-stage{position:absolute;inset:0}
+.cy-ring{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.cy-ring .track{fill:none;stroke:#D7E9EF;stroke-width:10;vector-effect:non-scaling-stroke}
+.cy-ring .path{fill:none;stroke:var(--brand-2);stroke-width:2;stroke-dasharray:2 7;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.cy-ring .chev{fill:none;stroke:var(--brand);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.cy-orbit{position:absolute;inset:13%;border-radius:50%;animation:cySpin var(--D) linear infinite;pointer-events:none}
+.cy-orbit i{position:absolute;left:50%;top:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:var(--brand-2);
+  box-shadow:0 0 0 4px #fff,0 0 0 6px rgba(6,182,212,.35),0 0 22px 4px rgba(6,182,212,.55)}
+.cy-hub{position:absolute;left:32%;top:32%;width:36%;height:36%;border-radius:50%;overflow:hidden;isolation:isolate;color:#fff;
+  display:grid;place-items:center;text-align:center;
+  background:radial-gradient(circle at 50% 30%,#16324A 0%,#0B1220 68%);
+  box-shadow:0 0 0 10px #fff,0 0 0 11px var(--line),0 40px 70px -34px rgba(11,18,32,.65)}
+.cy-face{position:absolute;inset:6%;border-radius:50%;z-index:-1;
+  background:repeating-conic-gradient(from -1deg,rgba(255,255,255,.4) 0 2deg,transparent 2deg 30deg);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 8px),#000 calc(100% - 7px));mask:radial-gradient(farthest-side,transparent calc(100% - 8px),#000 calc(100% - 7px))}
+.cy-sweep{position:absolute;inset:0;border-radius:50%;z-index:-1;animation:cySpin var(--D) linear infinite;
+  background:conic-gradient(from 0deg,transparent 0 290deg,rgba(34,211,238,.32) 360deg)}
+.cy-hub-txt{display:flex;flex-direction:column;align-items:center;gap:4px;padding:0 14%}
+.cy-hub-txt span{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#67E8F9}
+.cy-hub-txt b{font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,3.6vw,32px);line-height:1.05;letter-spacing:-.02em}
+.cy-hub-txt small{font-size:12.5px;color:#9FB0C2;line-height:1.4}
+.cy-steps{list-style:none;margin:0;padding:0;position:absolute;inset:0;counter-reset:cy}
+/* Each step lights up as the orbiting marker reaches it. Resting colours live in
+   variables so the "You" step keeps its green between highlights. */
+.cy-steps li{--bc:var(--line);--sh:0 14px 30px -22px rgba(11,18,32,.35);--ac:var(--brand-2);--ib:#E0F4F8;--if:var(--brand);--ab:var(--brand);
+  counter-increment:cy;position:absolute;left:var(--x);top:var(--y);transform:translate(-50%,-50%);width:clamp(128px,22%,172px);
+  background:#fff;border:1px solid var(--bc);border-radius:16px;padding:14px 12px 13px;text-align:center;box-shadow:var(--sh);
+  animation:cyAct var(--D) infinite;animation-delay:calc(var(--i) * var(--D) / 8 - .5s)}
+.cy-steps li.you{--bc:rgba(14,159,110,.55);--sh:0 0 0 4px rgba(14,159,110,.08),0 14px 30px -22px rgba(11,18,32,.35);
+  --ac:var(--good);--ib:#DEF7EC;--if:var(--good);--ab:var(--good)}
+.cy-steps li::before{content:counter(cy);position:absolute;top:-9px;left:-9px;width:22px;height:22px;border-radius:50%;
+  background:var(--ink);color:#fff;font:700 11px/22px 'Space Grotesk',sans-serif;box-shadow:0 0 0 3px #fff}
+.cy-steps li.you::after{content:'You';position:absolute;top:-10px;right:10px;font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  padding:2px 8px;border-radius:20px;background:var(--good);color:#fff}
+.cy-ico{width:40px;height:40px;margin:0 auto 9px;border-radius:12px;display:grid;place-items:center;background:var(--ib);color:var(--if);
+  animation:cyIco var(--D) infinite;animation-delay:inherit}
+.cy-ico svg{width:20px;height:20px}
+.cy-steps b{display:block;font-family:'Space Grotesk',sans-serif;font-size:14.5px;line-height:1.25;color:var(--ink)}
+.cy-steps li>span:last-child{display:block;font-size:12px;line-height:1.45;color:var(--muted);margin-top:4px}
+.cy-pin{display:none}
+@keyframes cySpin{to{transform:rotate(360deg)}}
+@keyframes cyAct{
+  0%,11%{border-color:var(--ac);box-shadow:0 0 0 4px rgba(6,182,212,.14),0 18px 36px -20px rgba(6,182,212,.55)}
+  15%,100%{border-color:var(--bc);box-shadow:var(--sh)}}
+@keyframes cyIco{0%,11%{background:var(--ab);color:#fff}15%,100%{background:var(--ib);color:var(--if)}}
+.cy-facts{display:flex;justify-content:center;flex-wrap:wrap;gap:12px 28px;margin-top:34px;font-size:14px;color:var(--muted)}
+.cy-facts>span{display:inline-flex;align-items:flex-start;gap:8px}
+.cy-facts em{font-style:normal}
+.cy-facts b{color:var(--ink);font-weight:600;margin-right:4px}
+.cy-facts svg{color:var(--brand);flex-shrink:0;margin-top:3px}
+@media (max-width:640px){
+  .cycle{width:100%;aspect-ratio:auto}
+  .cy-stage{position:relative;width:min(100%,330px);aspect-ratio:1;margin:0 auto 26px}
+  .cy-hub{box-shadow:0 0 0 6px #fff,0 0 0 7px var(--line),0 24px 40px -24px rgba(11,18,32,.6)}
+  .cy-hub-txt{padding:0 10%}
+  .cy-hub-txt span{font-size:8.5px}
+  .cy-hub-txt small{display:none}
+  .cy-orbit i{width:11px;height:11px;margin:-5.5px 0 0 -5.5px}
+  .cy-pin{--pc:var(--ink);--pb:var(--line);--pa:var(--brand);display:grid;place-items:center;position:absolute;left:var(--x);top:var(--y);
+    transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;background:#fff;border:1.5px solid var(--pb);color:var(--pc);
+    font:700 13px 'Space Grotesk',sans-serif;box-shadow:0 8px 18px -12px rgba(11,18,32,.45);
+    animation:cyPin var(--D) infinite;animation-delay:calc(var(--i) * var(--D) / 8 - .5s)}
+  .cy-pin.you{--pc:var(--good);--pb:var(--good);--pa:var(--good)}
+  @keyframes cyPin{0%,11%{background:var(--pa);border-color:var(--pa);color:#fff}15%,100%{background:#fff;border-color:var(--pb);color:var(--pc)}}
+  .cy-steps{position:static;display:grid;gap:10px}
+  .cy-steps li{position:relative;left:auto;top:auto;transform:none;width:auto;display:grid;grid-template-columns:40px 1fr;column-gap:12px;
+    align-items:center;text-align:left;padding:12px 14px;animation:none}
+  .cy-steps .cy-ico{grid-row:span 2;margin:0;animation:none}
+  .cy-steps li>span:last-child{margin-top:0}
+  .cy-steps li::before{top:5px;left:5px;width:18px;height:18px;font-size:10px;line-height:18px;box-shadow:0 0 0 2px #fff}
+  .cy-hub-txt b{font-size:18px}
+  .cy-facts{flex-direction:column;align-items:flex-start;gap:10px;max-width:340px;margin-left:auto;margin-right:auto}
+}
+@media (prefers-reduced-motion:reduce){.cy-orbit,.cy-sweep{display:none}}
+
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+@media (max-width:900px){.features{grid-template-columns:1fr}}
+.feat{background:#fff;padding:26px}
+.feat h3{font-size:17px;margin:12px 0 6px}.feat p{color:var(--muted);margin:0;font-size:14.5px}
+.feat svg{color:var(--brand)}
+
+/* pricing */
+.toggles{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-bottom:34px}
+.seg{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:12px;padding:4px}
+.seg button{border:0;background:none;padding:9px 16px;border-radius:9px;font-weight:600;font-size:14px;color:var(--muted);cursor:pointer;font-family:inherit}
+.seg button.on{background:var(--ink);color:#fff}
+.seg .save{font-size:11.5px;color:var(--good);margin-left:6px}
+.seg button.on .save{color:#86EFAC}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:14px}
+.plan{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:24px;display:flex;flex-direction:column}
+.plan.pop{border-color:var(--ink);box-shadow:0 24px 50px -30px rgba(11,18,32,.45);position:relative}
+.plan.pop::before{content:'Most popular';position:absolute;top:-11px;left:24px;background:var(--ink);color:#fff;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:20px}
+.plan h3{font-size:18px;min-height:2.6em}
+.plan .price{margin:14px 0 4px;display:flex;align-items:baseline;gap:6px}
+.plan .price b{font-family:'Space Grotesk';font-size:38px;letter-spacing:-.03em}
+.plan .price span{color:var(--muted);font-size:14px}
+.plan .per{font-size:13px;color:var(--muted);min-height:40px;margin-bottom:18px}
+.plan .btn{margin-top:auto}
+.trialnote{text-align:center;color:var(--muted);margin-top:22px;font-size:15px}
+.trialnote b{color:var(--ink)}
+
+footer{padding:40px 0;color:var(--muted);font-size:14px}
+footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<nav class="top" id="nav">
+  <div class="wrap">
+    <a class="logo" href="/"><i>₹</i>{{PLATFORM}}</a>
+    <div class="links"><a href="#bots">Bots</a><a href="#how">How it works</a><a href="#pricing">Pricing</a></div>
+    <span class="sp"></span>
+    <span id="navAuth"><a class="btn sm ghost" href="/login">Sign in</a> <a class="btn sm primary" href="/signup">Start free trial</a></span>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow"><b></b>New: Digital Marketing bot</span>
+      <h1>Leads with <em>proof</em>, not lists.</h1>
+      <p class="lead">AI bots that find businesses with a provable reason to need your services, check their website, and draft the email that quotes exactly what they found. You approve, it sends from your own mailbox.</p>
+      <div class="ctas">
+        <a class="btn primary" href="/signup">Start your free 1-day trial →</a>
+        <a class="btn ghost" href="#pricing">See pricing</a>
+      </div>
+      <div class="note"><span>No card needed for the trial</span><span>Your own mailbox</span><span>Cancel anytime</span></div>
+    </div>
+    <div class="visual">
+      <div class="chip-float cf1"><span class="dot"></span><div><b>38</b> leads found today</div></div>
+      <div class="mock">
+        <div class="bar"><i></i><i></i><i></i></div>
+        <div class="lead-head"><span class="score">82</span><div><b>Bella Napoli Pizzeria</b><small>Leeds, UK · Web Development</small></div></div>
+        <div class="ev"><div class="t">We observed</div>bellanapoli.co.uk has no mobile viewport tag, so it does not adapt to phone screens.</div>
+        <div class="ev b"><div class="t">We observed</div>No online ordering — customers can only order by phone.</div>
+        <div class="draft"><div class="s">Quick idea for Bella Napoli's website</div>
+          Hi Maria, I had a look at your website on my phone, and <mark>it doesn't adjust to the smaller screen</mark>. Most people now browse on their phones…</div>
+        <div class="actions"><span class="btn sm primary" style="background:var(--good)">Approve &amp; send</span><span class="btn sm ghost">Edit</span></div>
+      </div>
+      <div class="chip-float cf2"><span class="dot" style="background:var(--brand-2);box-shadow:0 0 0 4px rgba(6,182,212,.15)"></span><div><b>3</b> replies this week</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="trust"><div class="wrap">
+  <span><b>Evidence</b> behind every lead</span><span><b>Daily</b> on autopilot</span>
+  <span><b>CAN-SPAM &amp; GDPR</b> safeguards built in</span><span><b>Your mailbox</b>, your reputation</span>
+</div></div>
+
+<section id="bots"><div class="wrap">
+  <div class="sec-head reveal"><div class="k">The bots</div><h2>One bot for each service you sell</h2>
+    <p>Each bot knows where buyers of that service show up, what proves they need it, and how to say so honestly.</p></div>
+  <div class="botgrid" id="botGrid"></div>
+</div></section>
+
+<section id="how" style="background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)"><div class="wrap">
+  <div class="sec-head reveal"><div class="k">How it works</div><h2>It runs this loop every day, on its own</h2>
+    <p>At the time you set, your bot wakes up, picks two cities it hasn't searched yet, scrapes them for businesses that need you, and comes back with proof. You step in once — to approve.</p></div>
+  <div class="cycle reveal">
+    <div class="cy-stage" aria-hidden="true">
+      <svg class="cy-ring" viewBox="0 0 100 100">
+        <circle class="track" cx="50" cy="50" r="37"/>
+        <circle class="path" cx="50" cy="50" r="37"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(64.16 15.82) rotate(22.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(84.18 35.84) rotate(67.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(84.18 64.16) rotate(112.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(64.16 84.18) rotate(157.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(35.84 84.18) rotate(202.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(15.82 64.16) rotate(247.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(15.82 35.84) rotate(292.5)"/>
+        <path class="chev" d="M-.9,-1.1 L.5,0 L-.9,1.1" transform="translate(35.84 15.82) rotate(337.5)"/>
+      </svg>
+      <div class="cy-orbit"><i></i></div>
+      <div class="cy-hub"><div class="cy-face"></div><div class="cy-sweep"></div>
+        <div class="cy-hub-txt"><span>On autopilot</span><b>Every day</b><small>then again tomorrow, in new cities</small></div></div>
+      <span class="cy-pin" style="--i:0;--x:50%;--y:13%">1</span>
+      <span class="cy-pin" style="--i:1;--x:76.16%;--y:23.84%">2</span>
+      <span class="cy-pin" style="--i:2;--x:87%;--y:50%">3</span>
+      <span class="cy-pin" style="--i:3;--x:76.16%;--y:76.16%">4</span>
+      <span class="cy-pin" style="--i:4;--x:50%;--y:87%">5</span>
+      <span class="cy-pin" style="--i:5;--x:23.84%;--y:76.16%">6</span>
+      <span class="cy-pin you" style="--i:6;--x:13%;--y:50%">7</span>
+      <span class="cy-pin" style="--i:7;--x:23.84%;--y:23.84%">8</span>
+    </div>
+    <ol class="cy-steps">
+      <li style="--i:0;--x:50%;--y:13%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M5 3L2 6M19 3l3 3"/></svg></span>
+        <b>Wakes up on time</b><span>At the hour you set, in your timezone</span></li>
+      <li style="--i:1;--x:76.16%;--y:23.84%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 1114 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></span>
+        <b>Picks 2 new cities</b><span>Fresh ground every run, no repeats</span></li>
+      <li style="--i:2;--x:87%;--y:50%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg></span>
+        <b>Scrapes live data</b><span>Tenders, job ads, web posts and maps</span></li>
+      <li style="--i:3;--x:76.16%;--y:76.16%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5L16 9"/></svg></span>
+        <b>Checks each website</b><span>Finds the real gap and saves the proof</span></li>
+      <li style="--i:4;--x:50%;--y:87%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a8 8 0 1116 0"/><path d="M12 18l4-6"/></svg></span>
+        <b>Scores every lead</b><span>A clear 0–100 score you can read</span></li>
+      <li style="--i:5;--x:23.84%;--y:76.16%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4L15 6l4 4L9 20H4z"/><path d="M13.5 7.5l4 4"/></svg></span>
+        <b>Writes the email</b><span>Quotes exactly what it found</span></li>
+      <li class="you" style="--i:6;--x:13%;--y:50%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M7.5 12l3 3L17 8.5"/></svg></span>
+        <b>You approve</b><span>One click, or edit it first</span></li>
+      <li style="--i:7;--x:23.84%;--y:23.84%"><span class="cy-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></span>
+        <b>Sends and watches</b><span>From your mailbox; replies ping you</span></li>
+    </ol>
+  </div>
+  <div class="cy-facts reveal">
+    <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><em><b>Your schedule</b> weekdays, daily or weekends</em></span>
+    <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 1114 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg><em><b>130+ cities in 12 countries</b> searched in rotation</em></span>
+    <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><em><b>Nothing sends without you</b> manual approval by default</em></span>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head reveal"><div class="k">Built for results</div><h2>Everything outreach needs, nothing it shouldn't do</h2></div>
+  <div class="features reveal">
+    <div class="feat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><h3>Proof on every lead</h3><p>No evidence, no lead. Every claim in an email links back to a quote and a source you can open.</p></div>
+    <div class="feat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2"/></svg><h3>Runs on autopilot</h3><p>Schedule each bot for the time and days you want. Fresh cities every run, so it never re-finds the same businesses.</p></div>
+    <div class="feat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z"/></svg><h3>Sends from your mailbox</h3><p>Your domain, your reputation. Built-in warm-up and daily limits keep you out of spam folders.</p></div>
+    <div class="feat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><h3>Compliance built in</h3><p>Country rules, unsubscribe links, postal address and suppression lists are enforced in code, not left to chance.</p></div>
+    <div class="feat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z"/></svg><h3>Replies handled</h3><p>Replies stop the sequence instantly; bounces and opt-outs are suppressed forever.</p></div>
+    <div class="feat"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><h3>Live dashboard</h3><p>Watch each bot work in real time, see where leads drop off, and export everything to Excel.</p></div>
+  </div>
+</div></section>
+
+<section id="pricing" style="background:#fff;border-top:1px solid var(--line)"><div class="wrap">
+  <div class="sec-head reveal"><div class="k">Pricing</div><h2>Pay per bot. Only for what you use.</h2>
+    <p>Every plan includes unlimited agents for that bot, your own mailbox and the full dashboard.</p></div>
+  <div class="toggles">
+    <div class="seg" id="curSeg"><button data-v="INR">₹ INR</button><button data-v="USD">$ USD</button></div>
+    <div class="seg" id="perSeg"><button data-v="month">Monthly</button><button data-v="year">Yearly <span class="save">2 months free</span></button></div>
+  </div>
+  <div class="plans" id="plans"></div>
+  <p class="trialnote">Not sure yet? <b>Try any one bot free for <span id="trialHours">24</span> hours</b> — no card needed.</p>
+</div></section>
+
+<footer><div class="wrap"><span>© <span id="yr"></span> {{PLATFORM}}</span><span><a href="/login">Sign in</a> · <a href="/signup">Create account</a> · <a href="#pricing">Pricing</a></span></div></footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ICONS = {
+  web_development: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18a15 15 0 010-18z',
+  digital_marketing: 'M3 11l18-8v18l-18-8zM11 13v6a2 2 0 01-4 0v-7',
+  computer_vision: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 100-6 3 3 0 000 6z',
+  ai_agent: 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z',
+  ai_automation: 'M13 2L4.09 12.11a1 1 0 00.76 1.64H11l-1 8 8.91-10.11a1 1 0 00-.76-1.64H12l1-8z',
+};
+const icon = k => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[k] || 'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z'}"/></svg>`;
+let BOTS = [];
+const state = {
+  currency: (Intl.DateTimeFormat().resolvedOptions().timeZone || '').includes('Calcutta') || (Intl.DateTimeFormat().resolvedOptions().timeZone || '').includes('Kolkata') ? 'INR' : 'USD',
+  period: 'month',
+};
+const money = (v, cur) => (cur === 'INR' ? '₹' : '$') + Number(v).toLocaleString(cur === 'INR' ? 'en-IN' : 'en-US');
+
+function renderBots() {
+  $('#botGrid').innerHTML = BOTS.map(b => `
+    <div class="bot reveal"><span class="ico">${icon(b.key)}</span>
+      <h3>${esc(b.name)}</h3><p>${esc(b.tagline)}</p>
+      <ul>${(b.features || []).map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+      <div class="from">from <b>${money(b.prices[state.currency].month, state.currency)}</b>/month</div>
+    </div>`).join('');
+  observe();
+}
+
+function renderPlans() {
+  document.querySelectorAll('#curSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === state.currency));
+  document.querySelectorAll('#perSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === state.period));
+  $('#plans').innerHTML = BOTS.map((b, i) => {
+    const p = b.prices[state.currency][state.period];
+    const monthly = state.period === 'year' ? Math.round(p / 12) : null;
+    return `<div class="plan ${i === 0 ? 'pop' : ''}">
+      <h3>${esc(b.name)}</h3>
+      <div class="price"><b>${money(p, state.currency)}</b><span>/${state.period === 'year' ? 'year' : 'month'}</span></div>
+      <div class="per">${monthly ? `≈ ${money(monthly, state.currency)} a month, billed yearly` : 'Billed monthly'}</div>
+      <a class="btn ${i === 0 ? 'primary' : 'ghost'}" href="/signup?bot=${encodeURIComponent(b.key)}">Start free trial</a>
+    </div>`;
+  }).join('');
+}
+
+document.querySelectorAll('#curSeg button').forEach(b => b.onclick = () => { state.currency = b.dataset.v; renderPlans(); renderBots(); });
+document.querySelectorAll('#perSeg button').forEach(b => b.onclick = () => { state.period = b.dataset.v; renderPlans(); });
+
+let io;
+function observe() {
+  if (!('IntersectionObserver' in window)) { document.querySelectorAll('.reveal').forEach(e => e.classList.add('in')); return; }
+  io = io || new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .12 });
+  document.querySelectorAll('.reveal:not(.in)').forEach(e => io.observe(e));
+}
+
+window.addEventListener('scroll', () => $('#nav').classList.toggle('scrolled', scrollY > 8), { passive: true });
+$('#yr').textContent = new Date().getFullYear();
+
+(async () => {
+  observe();
+  try {
+    const r = await (await fetch('/api/public/bots')).json();
+    BOTS = r.bots || [];
+    $('#trialHours').textContent = r.trial_hours;
+    document.querySelectorAll('.th').forEach(e => e.textContent = r.trial_hours);
+  } catch (e) { BOTS = []; }
+  renderBots(); renderPlans();
+  try {
+    const me = await (await fetch('/auth/me')).json();
+    if (me.authenticated && me.login_required) {
+      $('#navAuth').innerHTML = `<a class="btn sm primary" href="/app">Open dashboard →</a>`;
+    }
+  } catch (e) { /* signed out */ }
+})();
+</script>
+</body>
+</html>
