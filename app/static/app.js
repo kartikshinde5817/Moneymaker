@@ -176,6 +176,9 @@ function systemChecks(o) {
       off: 'No reply alerts. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.' },
   ];
   if (o) list.unshift(
+    { name: 'Account emails', ok: !!o.account_mail_ready, icon: 'M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z',
+      on: 'Sign-up confirmations and password resets can be sent',
+      off: 'Not set, so customers can\'t reset passwords or confirm their email. Set SMTP_HOST, SMTP_USER, SMTP_PASS and SENDER_EMAIL.' },
     { name: 'Payments', ok: !!o.razorpay_ready, icon: 'M2 7h20v12H2zM2 11h20M6 15h4',
       on: 'Razorpay is connected, so customers can subscribe online',
       off: 'Customers cannot pay yet. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.' },

@@ -83,6 +83,60 @@ def landing():
     return _page("landing.html")
 
 
+def _legal(slug: str) -> HTMLResponse:
+    """Terms, Privacy, Refunds and Contact share one page shell."""
+    import re
+
+    from app import legal
+
+    shell = (STATIC_DIR / "legal.html").read_text(encoding="utf-8")
+    facts = legal.facts()
+    if slug == "contact":
+        title, kicker, sub = "Contact us", "We read every message", "We reply by email, usually within one working day."
+        body = legal.CONTACT_INTRO + """
+<form class="contact" id="cform">
+  <div><label for="cn">Your name</label><input id="cn" name="name" required minlength="2" maxlength="120" autocomplete="name"></div>
+  <div><label for="ce">Your email</label><input id="ce" name="email" type="email" required maxlength="255" autocomplete="email"></div>
+  <div><label for="cs">Subject</label><input id="cs" name="subject" maxlength="160" placeholder="Billing, refund, privacy, a bot problem…"></div>
+  <div><label for="cm">Message</label><textarea id="cm" name="message" required minlength="10" maxlength="4000"></textarea></div>
+  <div class="hp" aria-hidden="true"><label>Leave this empty <input name="website" tabindex="-1" autocomplete="off"></label></div>
+  <div class="note" id="cnote" role="status"></div>
+  <div><button class="btn primary" type="submit">Send message</button></div>
+</form>"""
+        toc = ""
+        if not (legal.facts()["ADDRESS"]):
+            body = body.replace('<div class="cbox"><b>Address</b><br>[[ADDRESS]]</div>', "")
+    else:
+        title, body = legal.PAGES[slug]
+        kicker, sub = "Legal", f"Last updated {legal.UPDATED}"
+        heads = re.findall(r'<h2 id="([^"]+)">([^<]+)</h2>', body)
+        toc = '<nav class="toc">' + "".join(f'<a href="#{i}">{t}</a>' for i, t in heads) + "</nav>"
+    html = (shell.replace("{{TITLE}}", title).replace("{{KICKER}}", kicker).replace("{{SUBTITLE}}", sub)
+            .replace("{{TOC}}", toc).replace("{{BODY}}", legal.fill(body))
+            .replace("{{COMPANY}}", facts["COMPANY"]).replace("{{PLATFORM}}", facts["PLATFORM"]))
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/terms", response_class=HTMLResponse, include_in_schema=False)
+def terms_page():
+    return _legal("terms")
+
+
+@app.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+def privacy_page():
+    return _legal("privacy")
+
+
+@app.get("/refund", response_class=HTMLResponse, include_in_schema=False)
+def refund_page():
+    return _legal("refund")
+
+
+@app.get("/contact", response_class=HTMLResponse, include_in_schema=False)
+def contact_page():
+    return _legal("contact")
+
+
 @app.get("/pricing", include_in_schema=False)
 def pricing():
     return RedirectResponse("/#pricing")
@@ -90,6 +144,8 @@ def pricing():
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/signup", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/forgot", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/reset", response_class=HTMLResponse, include_in_schema=False)
 def auth_page():
     return _page("auth.html")
 

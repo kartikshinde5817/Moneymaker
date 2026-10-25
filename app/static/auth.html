@@ -40,6 +40,9 @@ button.main{width:100%;background:var(--ink);color:#fff;border:0;border-radius:1
 button.main:hover{background:#1A2536}
 button.main:disabled{opacity:.6;cursor:wait}
 .err{background:#FEF2F2;border:1px solid #FBD5D5;color:#9B1C1C;border-radius:10px;padding:10px 12px;font-size:13.5px;margin:-4px 0 16px;display:none}
+.agree{display:flex;gap:9px;align-items:flex-start;font-weight:400;font-size:13px;color:var(--muted);margin:12px 0 4px;line-height:1.5}
+.agree input{width:auto;margin-top:3px;flex-shrink:0}
+.agree a{color:var(--brand-2);text-decoration:underline}
 .info{background:#ECFDF5;border:1px solid #BBF7D0;color:#065F46;border-radius:10px;padding:10px 12px;font-size:13.5px;margin-bottom:16px;display:none}
 .switch{text-align:center;color:var(--muted);font-size:14px;margin-top:22px}
 .fine{color:var(--muted);font-size:12.5px;margin:-8px 0 16px}
@@ -79,7 +82,8 @@ button.main:disabled{opacity:.6;cursor:wait}
     <label for="lPw">Password</label>
     <input id="lPw" type="password" autocomplete="current-password" placeholder="••••••••">
     <button class="main" id="goLogin">Sign in</button>
-    <div class="switch">New here? <a href="/signup">Create an account</a></div>
+    <div class="switch"><a href="/forgot">Forgot your password?</a></div>
+    <div class="switch" style="margin-top:8px">New here? <a href="/signup">Create an account</a></div>
   </div>
 
   <div id="stepSignup" class="step">
@@ -95,8 +99,39 @@ button.main:disabled{opacity:.6;cursor:wait}
     <input id="sEmail" type="email" autocomplete="email" placeholder="you@company.com">
     <label for="sPw">Password</label>
     <input id="sPw" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+    <label class="agree"><input type="checkbox" id="sAgree"> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>
+      and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
     <button class="main" id="goSignup">Create account</button>
     <div class="switch">Already have an account? <a href="/login">Sign in</a></div>
+  </div>
+
+  <div id="stepForgot" class="step">
+    <h1>Reset your password</h1>
+    <p class="sub">Enter your account email and we will send you a link to choose a new password.</p>
+    <div class="err" id="errForgot"></div>
+    <div class="info" id="infoForgot"></div>
+    <label for="fEmail">Email</label>
+    <input id="fEmail" type="email" autocomplete="email" placeholder="you@company.com">
+    <button class="main" id="goForgot">Send reset link</button>
+    <div class="switch"><a href="/login">Back to sign in</a></div>
+  </div>
+
+  <div id="stepReset" class="step">
+    <h1>Choose a new password</h1>
+    <p class="sub">Use at least 8 characters. You will be signed out everywhere else.</p>
+    <div class="err" id="errReset"></div>
+    <label for="rPw">New password</label>
+    <input id="rPw" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+    <label for="rPw2">Repeat it</label>
+    <input id="rPw2" type="password" autocomplete="new-password">
+    <button class="main" id="goReset">Save password</button>
+    <div class="switch"><a href="/forgot">Link expired? Ask for a new one</a></div>
+  </div>
+
+  <div id="stepSent" class="step">
+    <h1>Check your email</h1>
+    <p class="sub" id="sentText">We sent you a link.</p>
+    <button class="main" id="goOn">Continue to your dashboard</button>
   </div>
 
   <div id="stepTotp" class="step">
@@ -163,13 +198,42 @@ $('#goLogin').onclick = () => busy($('#goLogin'), async () => {
 $('#goSignup').onclick = () => busy($('#goSignup'), async () => {
   err('#errSignup');
   const body = { name: $('#sName').value.trim(), company: $('#sCompany').value.trim(),
-                 email: $('#sEmail').value.trim(), password: $('#sPw').value };
+                 email: $('#sEmail').value.trim(), password: $('#sPw').value, accept_terms: $('#sAgree').checked };
   if (body.name.length < 2) return err('#errSignup', 'Please enter your name.');
   if (!/^\S+@\S+\.\S+$/.test(body.email)) return err('#errSignup', 'Please enter a valid email address.');
   if (body.password.length < 8) return err('#errSignup', 'Use a password of at least 8 characters.');
-  try { const d = await postJSON('/auth/signup', body); home(d.role); }
-  catch (e) { err('#errSignup', e.message); }
+  if (!body.accept_terms) return err('#errSignup', 'Please tick the box to accept the Terms and Privacy Policy.');
+  try {
+    const d = await postJSON('/auth/signup', body);
+    if (d.verify_email) {
+      $('#sentText').textContent = 'We sent a confirmation link to ' + body.email + '. Open it to confirm your address; you need this before you can start your free trial. You can look around the dashboard in the meantime.';
+      show('stepSent'); $('#goOn').onclick = () => home(d.role);
+    } else home(d.role);
+  } catch (e) { err('#errSignup', e.message); }
 });
+
+// --- forgot / reset password ---
+$('#goForgot').onclick = () => busy($('#goForgot'), async () => {
+  err('#errForgot'); $('#infoForgot').style.display = 'none';
+  const email = $('#fEmail').value.trim();
+  if (!/^\S+@\S+\.\S+$/.test(email)) return err('#errForgot', 'Please enter a valid email address.');
+  try {
+    const d = await postJSON('/auth/forgot', { email });
+    const i = $('#infoForgot'); i.textContent = d.message; i.style.display = 'block';
+  } catch (e) { err('#errForgot', e.message); }
+});
+$('#fEmail').addEventListener('keydown', e => { if (e.key === 'Enter') $('#goForgot').click(); });
+$('#goReset').onclick = () => busy($('#goReset'), async () => {
+  err('#errReset');
+  const pw = $('#rPw').value;
+  if (pw.length < 8) return err('#errReset', 'Use a password of at least 8 characters.');
+  if (pw !== $('#rPw2').value) return err('#errReset', 'The two passwords do not match.');
+  try {
+    await postJSON('/auth/reset', { token: params.get('token') || '', password: pw });
+    location.href = '/login?reset=ok';
+  } catch (e) { err('#errReset', e.message); }
+});
+['#rPw', '#rPw2'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goReset').click(); }));
 ['#sName', '#sCompany', '#sEmail', '#sPw'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goSignup').click(); }));
 
 // --- admin 2FA ---
@@ -195,12 +259,20 @@ $('#confirmCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#
 // --- which page ---
 (async () => {
   if (params.get('suspended')) { const i = $('#infoLogin'); i.textContent = 'This account has been blocked. Please contact support.'; i.style.display = 'block'; i.style.background = '#FEF2F2'; i.style.color = '#9B1C1C'; i.style.borderColor = '#FBD5D5'; }
-  const signup = location.pathname.startsWith('/signup');
-  show(signup ? 'stepSignup' : 'stepLogin');
-  (signup ? $('#sName') : $('#lEmail')).focus();
+  const note = (text, good) => { const i = $('#infoLogin'); i.textContent = text; i.style.display = 'block';
+    if (!good) { i.style.background = '#FEF2F2'; i.style.color = '#9B1C1C'; i.style.borderColor = '#FBD5D5'; } };
+  if (params.get('verify') === 'ok') note('Your email is confirmed. Sign in to start your free trial.', true);
+  if (params.get('verify') === 'expired') note('That confirmation link has expired or was already used. Sign in and use "Send it again" in the banner.', false);
+  if (params.get('reset') === 'ok') note('Your password was changed. Sign in with the new one.', true);
+  const path = location.pathname;
+  const step = path.startsWith('/signup') ? 'stepSignup' : path.startsWith('/forgot') ? 'stepForgot'
+    : path.startsWith('/reset') ? 'stepReset' : 'stepLogin';
+  show(step);
+  ({ stepSignup: '#sName', stepForgot: '#fEmail', stepReset: '#rPw', stepLogin: '#lEmail' })[step] && $(({ stepSignup: '#sName', stepForgot: '#fEmail', stepReset: '#rPw', stepLogin: '#lEmail' })[step]).focus();
   try {
     const me = await (await fetch('/auth/me')).json();
-    if (me.authenticated && me.login_required && !me.totp_required) location.href = me.role === 'admin' ? '/app#admin' : '/app';
+    if (step === 'stepReset' || step === 'stepSent') { /* stay */ }
+    else if (me.authenticated && me.login_required && !me.totp_required) location.href = me.role === 'admin' ? '/app#admin' : '/app';
     else if (me.authenticated && me.totp_required) { await loadQr(); show('stepSetup'); }
   } catch (e) { /* stay */ }
 })();

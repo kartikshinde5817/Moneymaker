@@ -24,14 +24,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.db import get_db
-from app.services import auth
+from app.services import account_mail, auth, platform_mail, ratelimit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Paths reachable with no session. Keep this list short and deliberate.
 PUBLIC_PREFIXES = ("/auth/", "/u/", "/static/", "/favicon.ico", "/api/public/",
                    "/billing/razorpay/webhook")
-PUBLIC_PAGES = ("/", "/login", "/signup", "/pricing")
+PUBLIC_PAGES = ("/", "/login", "/signup", "/pricing", "/forgot", "/reset",
+                "/terms", "/privacy", "/refund", "/contact")
 
 
 def _set_cookie(response: Response, token: str) -> None:
@@ -58,11 +59,15 @@ def _start_session(db: Session, response: Response, user) -> None:
 
 
 @router.post("/login")
-def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
+def login(payload: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
     if not auth.login_required():
         return {"ok": True, "needs_totp": False, "role": "admin"}
 
     email = payload.email.strip().lower()
+    # Slow down password guessing: per address and per caller.
+    ratelimit.hit(f"login:{ratelimit.client_ip(request)}:{email}", 8, 900,
+                  "Too many sign-in attempts.")
+    ratelimit.hit(f"login-ip:{ratelimit.client_ip(request)}", 40, 900, "Too many sign-in attempts.")
     user = auth.authenticate(db, email, payload.password) if email else auth.check_password(db, payload.password)
     if user is None:
         raise HTTPException(401, "Incorrect email or password")
@@ -79,6 +84,7 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
         db.commit()
         return {"ok": True, "needs_totp": False, "needs_setup": True, "role": "admin"}
 
+    ratelimit.clear(f"login:{ratelimit.client_ip(request)}:{email}")
     _start_session(db, response, user)
     return {"ok": True, "needs_totp": False, "needs_setup": False, "role": user.role}
 
@@ -88,15 +94,21 @@ class SignupIn(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=8, max_length=200)
     company: str = Field("", max_length=160)
+    accept_terms: bool = False
 
 
 @router.post("/signup")
-def signup(payload: SignupIn, response: Response, db: Session = Depends(get_db)):
+def signup(payload: SignupIn, request: Request, response: Response, db: Session = Depends(get_db)):
     from email_validator import EmailNotValidError, validate_email
     from sqlalchemy import select
 
     from app.models import User
 
+    from app.models import utcnow
+
+    ratelimit.hit(f"signup:{ratelimit.client_ip(request)}", 6, 3600, "Too many accounts created from here.")
+    if not payload.accept_terms:
+        raise HTTPException(400, "Please accept the Terms of Service and Privacy Policy to continue.")
     try:
         email = validate_email(payload.email.strip(), check_deliverability=False).normalized.lower()
     except EmailNotValidError:
@@ -106,8 +118,89 @@ def signup(payload: SignupIn, response: Response, db: Session = Depends(get_db))
         raise HTTPException(409, "An account with this email already exists. Please sign in.")
     user = auth.create_customer(db, email=email, password=payload.password,
                                 name=payload.name, company=payload.company)
+    user.terms_accepted_at = utcnow()
+    needs_verify = platform_mail.verification_enforced()
+    if needs_verify:
+        account_mail.send_verification(db, user)
+    else:
+        user.email_verified_at = utcnow()  # we cannot send mail, so there is nothing to confirm
     _start_session(db, response, user)
-    return {"ok": True, "role": "customer"}
+    return {"ok": True, "role": "customer", "verify_email": needs_verify}
+
+
+@router.get("/verify", include_in_schema=False)
+def verify_email(token: str = "", db: Session = Depends(get_db)):
+    """The link in the confirmation email."""
+    from fastapi.responses import RedirectResponse
+
+    from app.models import utcnow
+
+    user = auth.redeem_token(db, token, "verify")
+    if user is None:
+        return RedirectResponse("/login?verify=expired")
+    if user.email_verified_at is None:
+        user.email_verified_at = utcnow()
+    db.commit()
+    return RedirectResponse("/login?verify=ok")
+
+
+@router.post("/resend-verification")
+def resend_verification(request: Request, db: Session = Depends(get_db)):
+    user = auth.current_user(request, db)
+    if user is None:
+        raise HTTPException(401, "Not authenticated")
+    if user.email_verified_at is not None:
+        return {"ok": True, "already": True}
+    ratelimit.hit(f"resend:{user.id}", 3, 3600, "You have asked for several emails already.")
+    sent = account_mail.send_verification(db, user)
+    db.commit()
+    if not sent:
+        raise HTTPException(503, "We could not send email right now. Please try again in a few minutes.")
+    return {"ok": True}
+
+
+class ForgotIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+@router.post("/forgot")
+def forgot_password(payload: ForgotIn, request: Request, db: Session = Depends(get_db)):
+    """Always answers the same, so it cannot be used to find out who has an account."""
+    from sqlalchemy import select
+
+    from app.models import User
+
+    email = payload.email.strip().lower()
+    ratelimit.hit(f"forgot-ip:{ratelimit.client_ip(request)}", 10, 3600, "Too many reset requests.")
+    ratelimit.hit(f"forgot:{email}", 3, 3600, "A reset email was already sent recently.")
+    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    # The admin password lives in the server's environment, so it is changed there.
+    if user is not None and user.role == "customer" and user.status == "active":
+        account_mail.send_password_reset(db, user)
+        db.commit()
+    return {"ok": True, "message": "If that address has an account, a reset link is on its way."}
+
+
+class ResetIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+
+
+@router.post("/reset")
+def reset_password(payload: ResetIn, request: Request, db: Session = Depends(get_db)):
+    from app.models import utcnow
+
+    ratelimit.hit(f"reset-ip:{ratelimit.client_ip(request)}", 20, 3600, "Too many attempts.")
+    user = auth.redeem_token(db, payload.token, "reset")
+    if user is None or user.role != "customer" or user.status != "active":
+        raise HTTPException(400, "This reset link has expired or was already used. Please ask for a new one.")
+    user.password_hash = auth.hash_password(payload.password)
+    if user.email_verified_at is None:
+        user.email_verified_at = utcnow()  # they just proved they own the inbox
+    auth.destroy_all_sessions(db, user.id)  # anyone signed in with the old password is out
+    db.commit()
+    auth._forget_sessions()
+    return {"ok": True}
 
 
 class TotpIn(BaseModel):
@@ -184,6 +277,7 @@ def me(request: Request, db: Session = Depends(get_db)):
         "role": user.role if user else None,
         "name": user.name if user else None,
         "totp_required": bool(user and user.role == "admin" and not user.totp_confirmed),
+        "email_verified": bool(user and user.email_verified_at is not None),
     }
 
 

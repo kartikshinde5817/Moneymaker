@@ -83,6 +83,28 @@ class User(Base):
     totp_secret: Mapped[str | None] = mapped_column(String(64))
     totp_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+    # Set when the person clicks the link we emailed them (or resets their
+    # password by email, which proves the same thing). Null = not verified yet.
+    email_verified_at: Mapped[dt.datetime | None] = mapped_column(TS)
+    # When they ticked "I agree to the Terms and Privacy Policy" at signup.
+    terms_accepted_at: Mapped[dt.datetime | None] = mapped_column(TS)
+
+
+class AuthToken(Base):
+    """A one-time link sent by email: verify an address, or reset a password.
+
+    Only a hash of the token is stored, so a copy of the database cannot be
+    used to take over an account.
+    """
+
+    __tablename__ = "auth_tokens"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # verify | reset
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
+    expires_at: Mapped[dt.datetime] = mapped_column(TS)
+    used_at: Mapped[dt.datetime | None] = mapped_column(TS)
 
 
 class Session(Base):

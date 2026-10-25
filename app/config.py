@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     # The platform owner's login. Customers sign up themselves.
     admin_email: str = "admin@local"
     platform_name: str = "Money Maker"
+    # New accounts must confirm their email before starting a trial or paying.
+    # Only enforced while the server can actually send mail (SMTP_HOST set), so
+    # a missing mail setup never locks everyone out.
+    require_email_verification: bool = True
+    # Who the legal pages name as the operator. Falls back to PLATFORM_NAME.
+    legal_name: str = ""
+    legal_address: str = ""
+    legal_country: str = "India"
     support_email: str = ""
 
     # --- payments (Razorpay) ----------------------------------------------

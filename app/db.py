@@ -72,7 +72,7 @@ def _add_missing_columns() -> None:
 
 # --- versioned data migrations ------------------------------------------------
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Tables whose rows belong to one customer. Rows from before the app had
 # customers belong to the admin.
@@ -96,13 +96,20 @@ def _migrate() -> None:
     if version >= SCHEMA_VERSION:
         return
 
-    with engine.begin() as conn:
-        admin_id = ensure_admin_row(conn)
-        for table in OWNED_TABLES:
-            conn.execute(text(f'UPDATE "{table}" SET owner_id = :a WHERE owner_id IS NULL'),
-                         {"a": admin_id})
-    for table, old, new, cols in UNIQUE_SWAPS:
-        _swap_unique(table, old, new, cols)
+    if version < 2:
+        with engine.begin() as conn:
+            admin_id = ensure_admin_row(conn)
+            for table in OWNED_TABLES:
+                conn.execute(text(f'UPDATE "{table}" SET owner_id = :a WHERE owner_id IS NULL'),
+                             {"a": admin_id})
+        for table, old, new, cols in UNIQUE_SWAPS:
+            _swap_unique(table, old, new, cols)
+    if version < 3:
+        # Email verification arrived with version 3. Accounts that already
+        # exist were created before it and are not asked to verify.
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET email_verified_at = created_at "
+                              "WHERE email_verified_at IS NULL"))
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM settings WHERE key = 'schema_version'"))
         conn.execute(text("INSERT INTO settings (key, value) VALUES ('schema_version', :v)"),

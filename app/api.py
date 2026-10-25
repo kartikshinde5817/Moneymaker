@@ -20,7 +20,8 @@ from app.models import (
     Service, WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
 )
 from app.services import (
-    ai, auth, billing, catalog, inbox, linkedin, mailer, notify, pipeline, scoring, tenant, whatsapp,
+    ai, auth, billing, catalog, inbox, linkedin, mailer, notify, pipeline, platform_mail, ratelimit,
+    scoring, tenant, whatsapp,
 )
 from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
 from app.services.discovery import available_sources
@@ -75,6 +76,19 @@ def _owned(db: Session, model, row_id: int, me: Me, what: str = "item"):
     return row
 
 
+def _require_verified(db: Session, me: Me) -> None:
+    """New accounts confirm their email before a trial or a payment."""
+    from app.models import User
+    from app.services import platform_mail
+
+    if me.is_admin or not platform_mail.verification_enforced():
+        return
+    user = db.get(User, me.id)
+    if user is not None and user.email_verified_at is None:
+        raise HTTPException(403, "Please confirm your email address first. We sent you a link "
+                                 "when you signed up; you can ask for another from the banner at the top.")
+
+
 def _require_bot(db: Session, me: Me, bot_key: str) -> None:
     if me.is_admin:
         raise HTTPException(403, "The admin account runs the platform and has no agents of its own. "
@@ -106,7 +120,9 @@ def meta(me: Me = Depends(current_user), db: Session = Depends(get_db)):
         "user": {
             "id": me.id, "role": me.role, "name": user.name if user else "",
             "email": user.email if user else "", "company": user.company if user else "",
+            "email_verified": bool(user and user.email_verified_at is not None),
         },
+        "verification_required": platform_mail.verification_enforced(),
         "access": billing.access_map(db, me.id),
         "trial": {"used": bool(user and user.trial_started_at),
                   "bot": user.trial_bot if user else None, "ends_at": trial_end,
@@ -1487,6 +1503,7 @@ def start_trial(payload: TrialIn, me: Me = Depends(current_user), db: Session = 
 
     if me.is_admin:
         raise HTTPException(400, "The admin already has every bot.")
+    _require_verified(db, me)
     user = db.get(User, me.id)
     try:
         sub = billing.start_trial(db, user, payload.bot)
@@ -1509,6 +1526,7 @@ def checkout(payload: CheckoutIn, me: Me = Depends(current_user), db: Session = 
 
     if me.is_admin:
         raise HTTPException(400, "The admin already has every bot.")
+    _require_verified(db, me)
     try:
         order = billing.create_order(db, db.get(User, me.id), payload.bot,
                                      payload.period, payload.currency.upper())
@@ -1587,6 +1605,34 @@ def unsubscribe(token: str, db: Session = Depends(get_db)):
         "<p>You won't receive any further emails from us. "
         "Sorry for the interruption.</p>"
     )
+
+
+class ContactIn(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    email: str = Field(min_length=5, max_length=255)
+    subject: str = Field("", max_length=160)
+    message: str = Field(min_length=10, max_length=4000)
+    website: str = ""  # a field real people never fill in; bots do
+
+
+@public_router.post("/api/public/contact")
+def contact(payload: ContactIn, request: Request):
+    """The contact page's form: emails the support address."""
+    from email_validator import EmailNotValidError, validate_email
+
+    ratelimit.hit(f"contact:{ratelimit.client_ip(request)}", 5, 3600, "You have sent several messages already.")
+    if payload.website:  # honeypot: pretend it worked
+        return {"ok": True}
+    try:
+        sender = validate_email(payload.email.strip(), check_deliverability=False).normalized
+    except EmailNotValidError:
+        raise HTTPException(400, "Please enter a valid email address.") from None
+    to = settings.support_email or platform_mail.sender_address()
+    if not to or not platform_mail.ready():
+        raise HTTPException(503, "The contact form is not available right now. Please email us directly.")
+    body = (f"From: {payload.name} <{sender}>\nSubject: {payload.subject or '(none)'}\n\n{payload.message}\n")
+    platform_mail.send(to, f"[{settings.platform_name}] {payload.subject or 'Contact form'}", body, reply_to=sender)
+    return {"ok": True}
 
 
 @public_router.get("/api/public/bots")

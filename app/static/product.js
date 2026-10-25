@@ -64,6 +64,12 @@ function renderAccessBar() {
   const ending = keys.filter(k => access[k].kind !== 'trial' && access[k].expires_at
     && new Date(access[k].expires_at) - Date.now() < 3 * 864e5);
   const ico = d => `<span class="abar-ico">${svgIcon(d, 15)}</span>`;
+  if (META.verification_required && META.user && !META.user.email_verified) {
+    bar.innerHTML = `<div class="abar warn">${ico(NODE_ICONS.inbox)}<span><b>Confirm your email.</b> We sent a link to ${esc(META.user.email)}.
+      You need to open it before you can start a free trial or subscribe. Check your spam folder too.</span>
+      <button class="btn sm primary" id="resendVerify" onclick="resendVerification()">Send it again</button></div>`;
+    return;
+  }
   if (!keys.length) {
     html = ico(NODE_ICONS.rocket) + (META.trial && META.trial.used
       ? `<span><b>Your access has ended.</b> Subscribe to a bot to keep finding leads.</span><a class="btn sm primary" href="#bots">See plans</a>`
@@ -92,6 +98,14 @@ async function loadRazorpay() {
     s.onload = ok; s.onerror = () => fail(new Error('Could not load the payment window. Check your connection.'));
     document.head.appendChild(s);
   });
+}
+
+async function resendVerification() {
+  const b = $('#resendVerify');
+  if (b) { b.disabled = true; b.textContent = 'Sending…'; }
+  try { await post('/auth/resend-verification'); toast('Sent. Check your inbox (and spam) for the link.', 'good'); }
+  catch (e) { toast(e.message, 'bad'); }
+  if (b) { b.disabled = false; b.textContent = 'Send it again'; }
 }
 
 async function startTrial(key) {
@@ -574,6 +588,10 @@ async function openCustomer(id) {
       <div><div class="muted">Company</div><b>${esc(c.company || '—')}</b></div>
       <div><div class="muted">Joined</div><b>${fmtDay(c.created_at)}</b></div>
       <div><div class="muted">Last sign-in</div><b>${c.last_login_at ? fmtTime(c.last_login_at) : '—'}</b></div>
+      <div><div class="muted">Email</div>${c.email_verified
+        ? '<span class="pill sent">verified</span>'
+        : `<span class="pill pending_approval">not verified</span> <button class="btn sm ghost" onclick="markVerified(${c.id})">Mark verified</button>`}</div>
+      <div><div class="muted">Accepted terms</div><b>${c.terms_accepted_at ? fmtDay(c.terms_accepted_at) : '—'}</b></div>
       <div><div class="muted">Free trial</div><b>${c.trial_bot ? `${esc(botName(c.trial_bot))} · ${fmtDay(c.trial_started_at)}` : 'not used'}</b></div>
       <div><div class="muted">Status</div><span class="pill ${c.status === 'active' ? 'sent' : 'rejected'}">${c.status === 'active' ? 'active' : 'blocked'}</span></div>
     </div>
@@ -623,6 +641,10 @@ async function revokeBot(id, key) {
 async function setCustomerStatus(id, status) {
   if (status === 'suspended' && !confirm('Block this account?\n\nThey are signed out immediately and cannot sign in. Their data is kept.')) return;
   try { await patch(`/api/admin/customers/${id}`, { status }); toast(status === 'active' ? 'Account unblocked' : 'Account blocked', 'good'); openCustomer(id); if (VIEW === 'customers') VIEWS.customers(); }
+  catch (e) { toast(e.message, 'bad'); }
+}
+async function markVerified(id) {
+  try { await patch(`/api/admin/customers/${id}`, { email_verified: true }); toast('Marked as verified', 'good'); openCustomer(id); }
   catch (e) { toast(e.message, 'bad'); }
 }
 async function deleteCustomer(id, email) {

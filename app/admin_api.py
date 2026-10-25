@@ -20,7 +20,7 @@ from app.db import get_db
 from app.models import (
     Bot, Campaign, CampaignRun, EmailMessage, Lead, Payment, Subscription, User, as_aware, utcnow,
 )
-from app.services import auth, billing, tenant, workspace
+from app.services import auth, billing, platform_mail, tenant, workspace
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_only)])
 
@@ -108,6 +108,7 @@ def overview(db: Session = Depends(get_db)):
                             "created_at": _iso(u.created_at)} for u in recent_users],
         "razorpay_ready": billing.razorpay_ready(),
         "webhook_ready": bool(settings.razorpay_webhook_secret),
+        "account_mail_ready": platform_mail.ready(),
         # Agents, leads and emails still owned by the admin account, from
         # before the app had customers. The panel offers to move them.
         "admin_workspace": workspace.counts(db, tenant.admin_id(db)),
@@ -166,6 +167,7 @@ def customer_detail(user_id: int, db: Session = Depends(get_db)):
     runs = db.execute(select(func.count(CampaignRun.id)).where(CampaignRun.owner_id == u.id)).scalar_one()
     return {
         "id": u.id, "name": u.name, "email": u.email, "company": u.company, "status": u.status,
+        "email_verified": u.email_verified_at is not None, "terms_accepted_at": _iso(u.terms_accepted_at),
         "created_at": _iso(u.created_at), "last_login_at": _iso(u.last_login_at),
         "trial_bot": u.trial_bot, "trial_started_at": _iso(u.trial_started_at),
         "access": billing.access_map(db, u.id),
@@ -195,6 +197,7 @@ class CustomerPatch(BaseModel):
     # "suspended" is what the panel calls Blocked: the account and all its data
     # are kept, but nobody can sign in and its agents and sending are paused.
     status: str | None = None
+    email_verified: bool | None = None  # lets you confirm an address by hand
     name: str | None = Field(None, max_length=160)
     company: str | None = Field(None, max_length=160)
 
@@ -208,6 +211,8 @@ def update_customer(user_id: int, payload: CustomerPatch, db: Session = Depends(
         u.status = payload.status
         if payload.status == "suspended":
             auth.destroy_all_sessions(db, u.id)  # signed out everywhere at once
+    if payload.email_verified is not None:
+        u.email_verified_at = utcnow() if payload.email_verified else None
     if payload.name is not None:
         u.name = payload.name.strip() or u.name
     if payload.company is not None:

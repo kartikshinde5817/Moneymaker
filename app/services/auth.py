@@ -31,6 +31,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DBSession
 
 from app.config import settings
+from app.models import AuthToken
 from app.models import Session as SessionRow
 from app.models import User, utcnow
 
@@ -245,3 +246,38 @@ def destroy_all_sessions(db: DBSession, user_id: int) -> None:
 
 def current_user(request: Request, db: DBSession) -> User | None:
     return resolve_session(db, request.cookies.get(COOKIE_NAME))
+
+
+# --- emailed one-time links: verify an address, reset a password --------------
+
+import hashlib
+
+TOKEN_LIFETIME = {"verify": dt.timedelta(hours=48), "reset": dt.timedelta(hours=1)}
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def issue_token(db: DBSession, user: User, kind: str) -> str:
+    """A fresh link token. Any earlier unused one of the same kind stops working."""
+    db.execute(delete(AuthToken).where(AuthToken.user_id == user.id, AuthToken.kind == kind,
+                                       AuthToken.used_at.is_(None)))
+    token = secrets.token_urlsafe(32)
+    db.add(AuthToken(user_id=user.id, kind=kind, token_hash=_hash_token(token),
+                     expires_at=utcnow() + TOKEN_LIFETIME[kind]))
+    db.flush()
+    return token
+
+
+def redeem_token(db: DBSession, token: str, kind: str) -> User | None:
+    """Use up a token and return its user, or None if it is unknown, used or expired."""
+    from app.models import as_aware
+
+    row = db.execute(select(AuthToken).where(
+        AuthToken.token_hash == _hash_token(token or ""), AuthToken.kind == kind)).scalar_one_or_none()
+    if row is None or row.used_at is not None or as_aware(row.expires_at) < utcnow():
+        return None
+    row.used_at = utcnow()
+    db.flush()
+    return db.get(User, row.user_id)
