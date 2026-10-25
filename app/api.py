@@ -20,7 +20,7 @@ from app.models import (
     Service, WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
 )
 from app.services import (
-    ai, auth, billing, catalog, inbox, linkedin, mailer, notify, pipeline, platform_mail, ratelimit,
+    ai, auth, billing, catalog, cities, inbox, linkedin, mailer, notify, pipeline, platform_mail, ratelimit,
     scoring, tenant, whatsapp,
 )
 from app.services.compliance import COUNTRY_NAMES, COUNTRY_POLICY, policy_for_country, suppress
@@ -140,6 +140,7 @@ def meta(me: Me = Depends(current_user), db: Session = Depends(get_db)):
             code: {"name": COUNTRY_NAMES.get(code, code), "policy": p, "reason": r}
             for code, (p, r) in COUNTRY_POLICY.items()
         },
+        "city_pool": {code: names for code, names in cities.CITY_POOL.items() if code in COUNTRY_POLICY},
         "scheduler_enabled": settings.scheduler_enabled,
         "timezone": cfg.timezone,
         "telegram_ready": notify.ready() and me.is_admin,
@@ -291,6 +292,8 @@ class CampaignIn(BaseModel):
     @field_validator("schedule_time")
     @classmethod
     def _time(cls, v: str) -> str:
+        if not v:
+            return ""  # not chosen yet: the agent stays switched off until it is
         try:
             hour, minute = (int(p) for p in v.split(":")[:2])
         except ValueError:
@@ -303,6 +306,8 @@ class CampaignIn(BaseModel):
     @classmethod
     def _days(cls, v: str) -> str:
         from app.scheduler import DAY_MAP
+        if not v:
+            return ""
         if v not in DAY_MAP:
             raise ValueError(f"days must be one of {', '.join(DAY_MAP)}")
         return v
@@ -436,6 +441,7 @@ def delete_service(key: str, me: Me = Depends(admin_only), db: Session = Depends
 @router.get("/campaigns")
 def list_campaigns(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from app.scheduler import upcoming
+    from app.seed import setup_problems
 
     campaigns = db.execute(select(Campaign).where(Campaign.owner_id == me.id)
                            .order_by(Campaign.schedule_time)).scalars().all()
@@ -459,7 +465,8 @@ def list_campaigns(me: Me = Depends(current_user), db: Session = Depends(get_db)
         leads = lead_counts.get(c.id, 0)
         out.append({
             "id": c.id, "name": c.name, "service_category": c.service_category,
-            "enabled": c.enabled, "sources": c.sources, "keywords": c.keywords,
+            "enabled": c.enabled, "configured": c.configured, "needs_setup": setup_problems(c),
+            "sources": c.sources, "keywords": c.keywords,
             "locations": c.locations, "countries": c.countries,
             "schedule_time": c.schedule_time, "schedule_days": c.schedule_days,
             "min_score": c.min_score,
@@ -501,11 +508,24 @@ def update_campaign(campaign_id: int, payload: CampaignIn, me: Me = Depends(curr
     bot = db.execute(select(Bot).where(Bot.key == c.service_category)).scalar_one_or_none()
     changes = payload.model_dump()
     changes.pop("service_category")
+    wants_on = changes.get("enabled", False)
     for k, v in changes.items():
         setattr(c, k, v)
     if bot is not None:  # the bot's limits win over whatever was submitted
         apply_bot_limits(c, bot)
+    # Nothing is chosen for the user: the agent switches on only once they have
+    # picked countries, cities, a start time and days. Partial choices are kept.
+    from app.seed import setup_problems
+    todo = setup_problems(c)
+    c.configured = not todo
+    if todo:
+        c.enabled = False
     db.commit()
+    if todo and wants_on:
+        from app.scheduler import reschedule as _resched
+        _resched()
+        raise HTTPException(400, "Your choices are saved, but the agent can't be switched on yet. "
+                                 "Still to choose: " + ", ".join(todo) + ".")
     from app.scheduler import reschedule
     reschedule()
     return {"ok": True}
@@ -559,6 +579,10 @@ def stop_campaign(campaign_id: int, me: Me = Depends(current_user), db: Session 
 def run_campaign_now(campaign_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
     campaign = _owned(db, Campaign, campaign_id, me, "campaign")
     _require_bot(db, me, campaign.service_category)
+    if not campaign.configured:
+        from app.seed import setup_problems
+        raise HTTPException(400, "Set up this agent first. Still to choose: "
+                                 + ", ".join(setup_problems(campaign)) + ".")
     with _running_lock:
         if campaign_id in _running:
             raise HTTPException(409, "this campaign is already running")
@@ -1214,6 +1238,7 @@ def source_guide(me: Me = Depends(current_user), db: Session = Depends(get_db)):
 def _key_configured(name: str) -> bool:
     return {
         "Serper": bool(settings.serper_api_key),
+        "Brave Search": bool(settings.brave_api_key),
         "Adzuna": bool(settings.adzuna_app_id and settings.adzuna_app_key),
         "Companies House": bool(settings.companies_house_key),
         "SAM.gov": bool(getattr(settings, "sam_gov_api_key", "")),
@@ -1287,6 +1312,7 @@ def export_leads(me: Me = Depends(current_user), db: Session = Depends(get_db)):
 class AccountIn(BaseModel):
     name: str | None = Field(None, max_length=160)
     company: str | None = Field(None, max_length=160)
+    phone: str | None = Field(None, max_length=32)
     sender_name: str | None = Field(None, max_length=160)
     sender_email: str | None = Field(None, max_length=320)
     company_name: str | None = Field(None, max_length=160)
@@ -1347,6 +1373,7 @@ def read_account(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     cfg = tenant.config_for(db, me.id)
     return {
         "name": user.name, "email": user.email, "company": user.company, "role": user.role,
+        "phone": user.phone,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "saved": {f: getattr(row, f, None) if row else None for f in ACCOUNT_FIELDS},
         "has_smtp_pass": bool(row and row.smtp_pass_enc) or bool(cfg.smtp_pass),
@@ -1374,6 +1401,12 @@ def update_account(payload: AccountIn, me: Me = Depends(current_user), db: Sessi
         user.name = payload.name.strip() or user.name
     if payload.company is not None:
         user.company = payload.company.strip() or None
+    if payload.phone is not None and payload.phone.strip():
+        from app.services import phone as phone_service
+        try:
+            user.phone = phone_service.normalize(payload.phone)
+        except phone_service.PhoneError as exc:
+            raise HTTPException(400, str(exc)) from None
     row = db.get(AccountSettings, me.id)
     if row is None:
         row = AccountSettings(owner_id=me.id)

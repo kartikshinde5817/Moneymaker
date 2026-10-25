@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
     serper_api_key: str = ""
+    brave_api_key: str = ""
     yelp_api_key: str = ""
     sam_gov_api_key: str = ""
     github_token: str = ""
@@ -116,6 +117,8 @@ class Settings(BaseSettings):
     per_mailbox_daily_cap: int = 40
     cooling_off_days: int = 90
     min_score_to_email: int = 55
+    # Look up a company's own website when a source only gave its name.
+    find_websites: bool = True
     scraper_user_agent: str = (
         "MoneyMakerBot/1.0 (+https://example.com/bot; lead research)"
     )

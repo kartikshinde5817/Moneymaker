@@ -25,6 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.db import get_db
 from app.services import account_mail, auth, platform_mail, ratelimit
+from app.services import phone as phone_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -94,6 +95,8 @@ class SignupIn(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=8, max_length=200)
     company: str = Field("", max_length=160)
+    phone: str = Field(min_length=5, max_length=32)
+    phone_code: str = Field("", max_length=8)  # the country code picked beside the number
     accept_terms: bool = False
 
 
@@ -113,11 +116,16 @@ def signup(payload: SignupIn, request: Request, response: Response, db: Session 
         email = validate_email(payload.email.strip(), check_deliverability=False).normalized.lower()
     except EmailNotValidError:
         raise HTTPException(400, "Please enter a valid email address.") from None
+    try:
+        phone = phone_service.normalize(payload.phone, payload.phone_code)
+    except phone_service.PhoneError as exc:
+        raise HTTPException(400, str(exc)) from None
     if email == (settings.admin_email or "").lower() or db.execute(
             select(User).where(User.email == email)).scalar_one_or_none():
         raise HTTPException(409, "An account with this email already exists. Please sign in.")
     user = auth.create_customer(db, email=email, password=payload.password,
                                 name=payload.name, company=payload.company)
+    user.phone = phone
     user.terms_accepted_at = utcnow()
     needs_verify = platform_mail.verification_enforced()
     if needs_verify:

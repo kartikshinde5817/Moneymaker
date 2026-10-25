@@ -74,6 +74,8 @@ class User(Base):
     company: Mapped[str | None] = mapped_column(String(160))
     # active | suspended
     status: Mapped[str] = mapped_column(String(16), default="active", server_default="active")
+    # Mobile number in international form (+919876543210), asked at sign-up.
+    phone: Mapped[str | None] = mapped_column(String(24))
     # The one free trial each account gets: which bot, and when it started.
     trial_bot: Mapped[str | None] = mapped_column(String(32))
     trial_started_at: Mapped[dt.datetime | None] = mapped_column(TS)
@@ -438,6 +440,9 @@ class Campaign(Base):
     daily_email_limit: Mapped[int] = mapped_column(Integer, default=20)
     approval_mode: Mapped[str] = mapped_column(String(16), default="manual")  # manual|auto
     min_score: Mapped[int] = mapped_column(Integer, default=55)
+    # False until the user has chosen their countries, cities, start time and
+    # days. A new agent starts empty: it never runs on someone else's choices.
+    configured: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
 
 

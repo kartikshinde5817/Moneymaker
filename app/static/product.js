@@ -181,8 +181,8 @@ function botFacts(bot) {
   const a = bot.agent || {}, pl = bot.plan || {}, names = META.country_policy || {};
   const fmtHours = h => h % 24 === 0 ? `${h / 24} day${h === 24 ? '' : 's'}` : `${h} hours`;
   const rows = [
-    ['Countries', (a.countries || []).map(c => (names[c] || {}).name || c).join(', ') || '—'],
-    ['Runs', `${DAYS_LABEL[a.schedule_days] || a.schedule_days || '—'} at ${a.schedule_time || '—'}`],
+    ['Available in', (a.countries || []).map(c => (names[c] || {}).name || c).join(', ') || '—'],
+    ['You choose', 'which of those countries and cities to search, and the days and time it runs'],
     ['Leads per run', `up to ${a.leads_per_run || '—'}`],
     ['Searches', (a.sources || []).length ? a.sources.map(k => SOURCE_LABEL[k] || k).join(', ') : 'every available source'],
     ['Free trial', pl.trial_hours ? fmtHours(pl.trial_hours) : '—'],
@@ -295,6 +295,8 @@ VIEWS.account = async function () {
       <div class="grid2">
         <div class="inp"><label for="ac_name">Your name</label><input id="ac_name" value="${esc(a.name || '')}"></div>
         <div class="inp"><label for="ac_company">Company</label><input id="ac_company" value="${esc(a.company || '')}"></div>
+        <div class="inp"><label for="ac_phone">Mobile number</label><input id="ac_phone" type="tel" value="${esc(a.phone || '')}" placeholder="+91 98765 43210">
+          <span class="fine">With the country code.</span></div>
         <div class="inp"><label>Sign-in email</label><input value="${esc(a.email)}" disabled></div>
         <div class="inp"><label>Member since</label><input value="${esc(fmtDay(a.created_at))}" disabled></div>
       </div>
@@ -389,6 +391,7 @@ VIEWS.account = async function () {
     out.smtp_pass = $('#ac_smtp_pass').value || null;
     out.imap_pass = $('#ac_imap_pass').value || null;
     out.name = $('#ac_name').value.trim(); out.company = $('#ac_company').value.trim();
+    out.phone = $('#ac_phone').value.trim();
     return out;
   };
   const save = async (quiet) => {
@@ -464,7 +467,7 @@ function wireTips(root) {
 /* ------------------------------------------------------- admin: overview */
 
 VIEWS.admin = async function () {
-  if (!isAdmin()) return go('workflow');
+  if (!isAdmin()) return go('dashboard');
   const o = await api('/api/admin/overview');
   const curs = [...new Set([...Object.keys(o.revenue_total), ...Object.keys(o.mrr), 'INR'])];
   let revCur = curs.includes(prefCurrency()) ? prefCurrency() : curs[0];
@@ -490,15 +493,15 @@ VIEWS.admin = async function () {
   };
 
   $('#view').innerHTML = `
-    <div class="head"><div><h2>Platform overview</h2><p>Customers, subscriptions and revenue across ${esc(META.app)}.</p></div>
-      <div class="row"><button class="btn" onclick="go('customers')">Customers</button><button class="btn primary" onclick="go('adminbots')">Bots & pricing</button></div></div>
-    ${!o.razorpay_ready ? '<div class="banner bad">Razorpay is not connected, so customers cannot pay. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET on the server.</div>'
-      : !o.webhook_ready ? '<div class="banner">Set RAZORPAY_WEBHOOK_SECRET so payments are confirmed even when a customer closes the tab before returning.</div>' : ''}
+    <div class="head"><div><h2>Platform overview</h2><p>Users, subscriptions and revenue across ${esc(META.app)}.</p></div>
+      <div class="row"><button class="btn" onclick="go('customers')">Users</button><button class="btn primary" onclick="go('adminbots')">Bots & pricing</button></div></div>
+    ${!o.razorpay_ready ? '<div class="banner bad">Razorpay is not connected, so users cannot pay. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET on the server.</div>'
+      : !o.webhook_ready ? '<div class="banner">Set RAZORPAY_WEBHOOK_SECRET so payments are confirmed even when a user closes the tab before returning.</div>' : ''}
     ${mailCard(o.account_mail, true)}
     ${transferCard(o.admin_workspace)}
     <div class="kpis k6">
-      ${kpi('Customers', n(o.customers), { sub: `+${o.new_7d} this week · +${o.new_30d} this month`, icon: I.users, i: 0 })}
-      ${kpi('Paying customers', n(o.paying_customers), { sub: `${o.active_subscriptions} active plans`, icon: I.card, tone: 'good', i: 1 })}
+      ${kpi('Users', n(o.customers), { sub: `+${o.new_7d} this week · +${o.new_30d} this month`, icon: I.users, i: 0 })}
+      ${kpi('Paying users', n(o.paying_customers), { sub: `${o.active_subscriptions} active plans`, icon: I.card, tone: 'good', i: 1 })}
       ${kpi('Trials running', n(o.live_trials), { sub: `${o.trials_started} trials started in total`, icon: NODE_ICONS.clock, tone: 'gold', i: 2 })}
       ${kpi('Monthly recurring', mrr[0] || '—', { v2: more(mrr), sub: 'yearly plans counted per month', icon: I.trend, tone: 'violet', i: 3 })}
       ${kpi('Revenue, 30 days', rev[0] || '—', { v2: more(rev), sub: `all time ${moneyMap(o.revenue_total)}`, icon: I.coin, tone: 'good', i: 4 })}
@@ -529,42 +532,43 @@ VIEWS.admin = async function () {
           <b class="mono">${fmtMinor(p.amount, p.currency)}</b>
           <span class="pill ${p.status === 'paid' ? 'sent' : p.status === 'failed' ? 'failed' : 'new'}">${p.status === 'created' ? 'open' : esc(p.status)}</span></div>`).join('')
           : '<p class="hint" style="margin:0">No payments yet.</p>'}</div>
-      <div class="card">${cardHead(I.users, 'Newest customers', '', '<button class="btn sm" onclick="go(\'customers\')">All customers</button>')}
+      <div class="card">${cardHead(I.users, 'Newest users', '', '<button class="btn sm" onclick="go(\'customers\')">All users</button>')}
         ${o.recent_signups.length ? o.recent_signups.slice(0, 5).map(u => `<div class="lrow click" onclick="openCustomer(${u.id})" role="button" tabindex="0"
             onkeydown="if(event.key==='Enter')openCustomer(${u.id})"><span class="av-s">${esc(initials(u.name || u.email))}</span>
           <div class="who"><b>${esc(u.name || '—')}</b><small>${esc(u.email)}${u.company ? ' · ' + esc(u.company) : ''}</small></div>
           <span class="num muted">${fmtDay(u.created_at)}</span></div>`).join('')
-          : '<p class="hint" style="margin:0">No customers yet. Share your landing page to get the first sign-ups.</p>'}</div>
+          : '<p class="hint" style="margin:0">No users yet. Share your landing page to get the first sign-ups.</p>'}</div>
     </div>`;
   wireTips($('#view'));
   $('#revCur').onclick = e => { const b = e.target.closest('button'); if (b) { revCur = b.dataset.v; paintRevenue(); } };
   paintRevenue();
 };
 
-/* ------------------------------------------------------ admin: customers */
+/* ------------------------------------------------------ admin: users */
 
 VIEWS.customers = async function () {
-  if (!isAdmin()) return go('workflow');
+  if (!isAdmin()) return go('dashboard');
   let q = '', status = '';
   const paint = async () => {
     const list = await api(`/api/admin/customers?q=${encodeURIComponent(q)}&status=${status}`);
     $('#custList').innerHTML = list.length ? `<div class="tbl-wrap"><table>
-      <thead><tr><th>Customer</th><th>Bots</th><th>Leads</th><th>Emails sent</th><th>Paid</th><th>Joined</th><th>Status</th></tr></thead>
+      <thead><tr><th>User</th><th>Mobile</th><th>Bots</th><th>Leads</th><th>Emails sent</th><th>Paid</th><th>Joined</th><th>Status</th></tr></thead>
       <tbody>${list.map(c => `<tr onclick="openCustomer(${c.id})">
         <td><div class="row" style="gap:10px;flex-wrap:nowrap"><span class="av-s">${esc(initials(c.name || c.email))}</span>
           <div class="biz">${esc(c.name || '—')}<small>${esc(c.email)}${c.company ? ' · ' + esc(c.company) : ''}</small></div></div></td>
+        <td class="mono" style="white-space:nowrap">${c.phone ? esc(c.phone) : '<span class="muted">—</span>'}</td>
         <td>${Object.keys(c.access).length ? Object.entries(c.access).map(([k, a]) =>
           `<span class="tag ${a.kind === 'trial' ? 'grey' : ''}" title="${esc(a.kind)} until ${esc(fmtDay(a.expires_at))}">${esc(botName(k).replace(/ Bot$/, ''))}${a.kind === 'trial' ? ' · trial' : ''}</span>`).join(' ')
           : '<span class="muted">none</span>'}</td>
         <td class="mono">${c.leads}</td><td class="mono">${c.emails_sent}</td>
         <td class="mono">${moneyMap(c.paid)}</td><td>${fmtDay(c.created_at)}</td>
         <td><span class="pill ${c.status === 'active' ? 'sent' : 'rejected'}">${c.status === 'active' ? 'active' : 'blocked'}</span></td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="empty"><h3>No customers found</h3><p>New sign-ups appear here.</p></div>';
+      </tbody></table></div>` : '<div class="empty"><h3>No users found</h3><p>New sign-ups appear here.</p></div>';
   };
   $('#view').innerHTML = `
-    <div class="head"><div><h2>Customers</h2><p>Every account, what it has access to, and how it is using the bots.</p></div></div>
+    <div class="head"><div><h2>Users</h2><p>Every account, what it has access to, and how it is using the bots.</p></div></div>
     <div class="filters">
-      <input type="search" id="custQ" placeholder="Search name, email or company">
+      <input type="search" id="custQ" placeholder="Search name, email, mobile or company">
       <select id="custS"><option value="">All statuses</option><option value="active">Active</option><option value="suspended">Blocked</option></select>
     </div>
     <div id="custList"><div class="empty">Loading…</div></div>`;
@@ -583,11 +587,12 @@ async function openCustomer(id) {
   const bots = (META.bots || []);
   d.innerHTML = `
     <div class="ce-head"><span class="ce-ico" style="font-weight:700">${esc(initials(c.name || c.email))}</span>
-      <div style="min-width:0"><span class="ce-kicker">Customer #${c.id}</span><h2>${esc(c.name || c.email)}</h2></div>
+      <div style="min-width:0"><span class="ce-kicker">User #${c.id}</span><h2>${esc(c.name || c.email)}</h2></div>
       <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button></div>
     <div class="ce-sec"><div class="grid2" style="font-size:13px">
       <div><div class="muted">Email</div><b>${esc(c.email)}</b></div>
       <div><div class="muted">Company</div><b>${esc(c.company || '—')}</b></div>
+      <div><div class="muted">Mobile</div><b class="mono">${c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '—'}</b></div>
       <div><div class="muted">Joined</div><b>${fmtDay(c.created_at)}</b></div>
       <div><div class="muted">Last sign-in</div><b>${c.last_login_at ? fmtTime(c.last_login_at) : '—'}</b></div>
       <div><div class="muted">Email</div>${c.email_verified
@@ -624,7 +629,7 @@ async function openCustomer(id) {
         Nothing is deleted: their leads, emails and settings are kept, and everything works again when you unblock.</p></div>
 
     <div class="ce-sec dz"><h4>Delete account</h4>
-      <p class="fine" style="margin:0 0 10px;font-size:12px">Permanently removes this customer and all their details: agents, runs, leads, emails,
+      <p class="fine" style="margin:0 0 10px;font-size:12px">Permanently removes this user and all their details: agents, runs, leads, emails,
         mail settings, plans and payment records. This cannot be undone. To keep the data, block the account instead.</p>
       <button class="btn danger" onclick="deleteCustomer(${c.id},'${esc(c.email)}')">Delete this account…</button></div>`;
 }
@@ -662,7 +667,7 @@ async function deleteCustomer(id, email) {
   } catch (e) { toast(e.message, 'bad'); }
 }
 async function resetCustomerPassword(id) {
-  const pw = prompt('New password for this customer (at least 8 characters). Share it with them securely.');
+  const pw = prompt('New password for this user (at least 8 characters). Share it with them securely.');
   if (!pw) return;
   try { await post(`/api/admin/customers/${id}/password`, { password: pw }); toast('Password changed — they are signed out everywhere', 'good'); }
   catch (e) { toast(e.message, 'bad'); }
@@ -671,10 +676,10 @@ async function resetCustomerPassword(id) {
 /* ------------------------------------------------- admin: bots & pricing */
 
 VIEWS.adminbots = async function () {
-  if (!isAdmin()) return go('workflow');
+  if (!isAdmin()) return go('dashboard');
   const bots = await api('/api/admin/bots');
   $('#view').innerHTML = `
-    <div class="head"><div><h2>Bots & pricing</h2><p>Everything about a bot: what it costs, which countries and sources its agent uses, when it runs and how long plans last. Customers see all of this but cannot change it. Changes reach every customer's agent straight away; existing plans keep the price they were bought at.</p></div>
+    <div class="head"><div><h2>Bots & pricing</h2><p>Everything about a bot: what it costs, which countries and sources its agent uses, when it runs and how long plans last. Users see all of this but cannot change it. Changes reach every user's agent straight away; existing plans keep the price they were bought at.</p></div>
       <button class="btn primary" onclick="openServiceForm(null,'list')">${svgIcon(NODE_ICONS.plus)} New bot</button></div>
     <div class="store">${bots.map((b, i) => `
       <div class="sbot" style="--i:${i}" data-key="${esc(b.key)}">
@@ -692,17 +697,14 @@ VIEWS.adminbots = async function () {
           <div class="inp"><label>$ / month</label><input type="number" min="0" class="p_usd_month" value="${b.prices.USD.month}"></div>
           <div class="inp"><label>$ / year</label><input type="number" min="0" class="p_usd_year" value="${b.prices.USD.year}"></div>
         </div>
-        <div class="bsec"><h4>Agent — what it does for every customer</h4>
-          <div class="inp"><label>Countries <span class="opt">customers can only pick from these</span></label>
+        <div class="bsec"><h4>Agent — limits for every user <span class="opt" style="text-transform:none;letter-spacing:0">users choose their own cities, days and start time</span></h4>
+          <div class="inp"><label>Countries <span class="opt">users can only pick from these</span></label>
             <div class="chips bCountries">${Object.entries(META.country_policy || {}).map(([code, p]) =>
               chk(code, p.name || code, (b.agent.countries || []).includes(code), code)).join('')}</div></div>
           <div class="inp" style="margin-top:12px"><label>Lead sources <span class="opt">none selected = every available source</span></label>
             <div class="chips bSources">${(META.sources || []).map(x =>
               chk(x.key, SOURCE_LABEL[x.key] || x.label, (b.agent.sources || []).includes(x.key), x.available ? '' : 'key missing', !x.available)).join('')}</div></div>
           <div class="pgrid" style="margin-top:12px">
-            <div class="inp"><label>Runs on</label><select class="a_days">${Object.entries(DAYS_LABEL).map(([v, l]) =>
-              `<option value="${v}" ${v === b.agent.schedule_days ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
-            <div class="inp"><label>Start time</label><input type="time" class="a_time" value="${esc(b.agent.schedule_time)}"></div>
             <div class="inp"><label>Leads per run <span class="opt">most</span></label><input type="number" min="1" max="500" class="a_leads" value="${b.agent.leads_per_run}"></div>
             <div class="inp"><label>Min score <span class="opt">lowest</span></label><input type="number" min="0" max="100" class="a_score" value="${b.agent.min_score}"></div>
           </div></div>
@@ -733,7 +735,6 @@ async function saveBot(key) {
     price_usd_month: +v('.p_usd_month'), price_usd_year: +v('.p_usd_year'),
     countries: [...card.querySelectorAll('.bCountries .chk.on')].map(x => x.dataset.v),
     sources: [...card.querySelectorAll('.bSources .chk.on')].map(x => x.dataset.v),
-    schedule_days: v('.a_days'), schedule_time: v('.a_time') || '09:00',
     leads_per_run: +v('.a_leads') || 25, min_score: +v('.a_score'),
     trial_hours: v('.t_hours') ? +v('.t_hours') : null,
     month_days: +v('.t_month') || 30, year_days: +v('.t_year') || 365,
@@ -743,19 +744,19 @@ async function saveBot(key) {
   if (orig) { body.description = orig.description || ''; body.sort_order = orig.sort_order || 100; }
   try {
     const r = await api(`/api/admin/bots/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    toast(`${body.name} saved${r.agents_updated ? ` — ${r.agents_updated} customer agent${r.agents_updated === 1 ? '' : 's'} updated` : ''}`, 'good'); await refreshMeta();
+    toast(`${body.name} saved${r.agents_updated ? ` — ${r.agents_updated} user agent${r.agents_updated === 1 ? '' : 's'} updated` : ''}`, 'good'); await refreshMeta();
   } catch (e) { toast(e.message, 'bad'); }
 }
 
 /* ------------------------------------------------------- admin: payments */
 
 VIEWS.payments = async function () {
-  if (!isAdmin()) return go('workflow');
+  if (!isAdmin()) return go('dashboard');
   let status = '';
   const paint = async () => {
     const rows = await api('/api/admin/payments?status=' + status);
     $('#payList').innerHTML = rows.length ? `<div class="tbl-wrap"><table>
-      <thead><tr><th>Date</th><th>Customer</th><th>Bot</th><th>Plan</th><th>Amount</th><th>Status</th><th>Razorpay reference</th></tr></thead>
+      <thead><tr><th>Date</th><th>User</th><th>Bot</th><th>Plan</th><th>Amount</th><th>Status</th><th>Razorpay reference</th></tr></thead>
       <tbody>${rows.map(p => `<tr onclick="openCustomer(${p.user_id})">
         <td>${fmtTime(p.paid_at || p.created_at)}</td><td class="biz">${esc(p.name || '—')}<small>${esc(p.email)}</small></td>
         <td>${esc(p.bot)}</td><td>${p.period === 'year' ? 'Yearly' : 'Monthly'}</td><td class="mono"><b>${fmtMinor(p.amount, p.currency)}</b></td>
@@ -764,7 +765,7 @@ VIEWS.payments = async function () {
       </tbody></table></div>` : '<div class="empty"><h3>No payments</h3><p>Completed and attempted payments appear here.</p></div>';
   };
   $('#view').innerHTML = `
-    <div class="head"><div><h2>Payments</h2><p>Every checkout attempt. "Not completed" means the customer opened the payment window but did not finish.</p></div></div>
+    <div class="head"><div><h2>Payments</h2><p>Every checkout attempt. "Not completed" means the user opened the payment window but did not finish.</p></div></div>
     <div class="filters"><select id="payS"><option value="">All</option><option value="paid">Paid</option><option value="created">Not completed</option><option value="failed">Failed</option></select></div>
     <div id="payList"><div class="empty">Loading…</div></div>`;
   $('#payS').onchange = e => { status = e.target.value; paint(); };
@@ -814,8 +815,8 @@ async function sendTestEmail() {
 
 /* ------------------------------------------------- move the admin workspace */
 
-// The admin account ran the agents before the app had customers. Until that
-// work is handed to a customer account, Overview offers to move it.
+// The admin account ran the agents before the app had users. Until that
+// work is handed to a user account, Overview offers to move it.
 const WS_LABEL = { campaigns: 'agents', campaign_runs: 'runs', leads: 'leads', email_messages: 'emails',
   whatsapp_messages: 'WhatsApp messages', mailboxes: 'mailboxes', suppressions: 'unsubscribes' };
 
@@ -823,24 +824,24 @@ function transferCard(ws) {
   const items = Object.entries(ws || {}).filter(([, n]) => n);
   if (!items.length) return '';
   return `<div class="card xfer">
-    ${cardHead('M5 12h14M13 6l6 6-6 6', 'Move your old workspace to a customer account',
+    ${cardHead('M5 12h14M13 6l6 6-6 6', 'Move your old workspace to a user account',
       'The admin account only runs the platform. Hand its agents and data to the account you will work from.')}
     <div class="xfer-chips">${items.map(([k, n]) => `<span><b>${n.toLocaleString()}</b> ${esc(WS_LABEL[k] || k)}</span>`).join('')}</div>
     <div class="grid3" style="margin-top:12px">
-      <div class="inp"><label for="xfEmail">Customer email</label><input id="xfEmail" type="email" placeholder="you@example.com" autocomplete="off"></div>
+      <div class="inp"><label for="xfEmail">User email</label><input id="xfEmail" type="email" placeholder="you@example.com" autocomplete="off"></div>
       <div class="inp"><label for="xfPass">Password for that account</label><input id="xfPass" type="password" placeholder="at least 8 characters" autocomplete="new-password">
         <span class="fine">Needed when the account is new. Leave empty to keep an existing password.</span></div>
       <div class="inp"><label for="xfName">Name</label><input id="xfName" placeholder="optional"></div>
     </div>
     <p class="hint">Mailbox and sender settings are copied over, and the account gets access to the bots its agents use.
-      The admin keeps only the platform: customers, bots, prices and payments.</p>
+      The admin keeps only the platform: users, bots, prices and payments.</p>
     <div class="save-row"><button class="btn primary" id="xfGo" onclick="transferWorkspace()">Move everything</button></div>
   </div>`;
 }
 
 async function transferWorkspace() {
   const email = $('#xfEmail').value.trim(), password = $('#xfPass').value, name = $('#xfName').value.trim();
-  if (!email) { toast('Enter the customer email', 'bad'); return; }
+  if (!email) { toast('Enter the user email', 'bad'); return; }
   if (!confirm(`Move all agents, leads and emails from the admin account to ${email}? This cannot be undone from the panel.`)) return;
   const b = $('#xfGo');
   b.disabled = true; b.innerHTML = '<span class="spin"></span> Moving…';
@@ -898,7 +899,7 @@ function watchIdentity() {
   renderFoot(); renderMe(); renderAccessBar();
   watchIdentity();
   const hash = (location.hash || '').replace('#', '');
-  const start = isAdmin() ? 'admin' : Object.keys(META.access || {}).length ? 'workflow' : 'bots';
+  const start = isAdmin() ? 'admin' : Object.keys(META.access || {}).length ? 'dashboard' : 'bots';
   go(VIEWS[hash] ? hash : start);
   setInterval(() => { if (!isAdmin()) renderAccessBar(); }, 60000);
 })();

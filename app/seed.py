@@ -126,6 +126,10 @@ FREE_KEY_PRIORITY = [
      "why": "Used by all four campaigns. Finds people stating a requirement in "
             "their own words, and every result is a live website the audit can "
             "mine for an email address. Highest impact by a wide margin."},
+    {"key": "BRAVE_API_KEY", "name": "Brave Search", "url": "https://brave.com/search/api/",
+     "free": "free plan",
+     "why": "A second web search with its own free quota, so agents find more people asking for "
+            "what you sell. Different results from Serper."},
     {"key": "ADZUNA_APP_ID / ADZUNA_APP_KEY", "name": "Adzuna",
      "url": "https://developer.adzuna.com", "free": "free tier",
      "why": "Job ads. A company hiring a computer-vision engineer has both the "
@@ -142,32 +146,54 @@ FREE_KEY_PRIORITY = [
 
 
 def apply_bot_limits(campaign: Campaign, bot) -> bool:
-    """Hold a customer's agent inside what its bot allows.
+    """Hold a user's agent inside what its bot allows.
 
     The admin sets, per bot, the countries it may search, the sources it uses,
-    the days it runs, the most leads per run and the lowest score it may
-    draft at. Returns True when something had to change.
+    the most leads per run and the lowest score it may draft at. Everything
+    else (which countries and cities, when it starts, which days) is the
+    user's own choice. Returns True when something had to change.
     """
     from app.services.billing import fill_agent_defaults
 
     fill_agent_defaults(bot)
     before = (list(campaign.countries or []), list(campaign.sources or []),
-              campaign.schedule_days, campaign.daily_lead_limit, campaign.min_score)
+              campaign.daily_lead_limit, campaign.min_score, campaign.configured, campaign.enabled)
     allowed = list(bot.countries)
-    campaign.countries = [c for c in (campaign.countries or []) if c in allowed] or allowed
+    campaign.countries = [c for c in (campaign.countries or []) if c in allowed]
     campaign.sources = list(bot.sources or [])
-    campaign.schedule_days = bot.schedule_days
     campaign.daily_lead_limit = max(1, min(campaign.daily_lead_limit or bot.leads_per_run, bot.leads_per_run))
     campaign.min_score = max(campaign.min_score if campaign.min_score is not None else 0, bot.min_score)
-    return before != (list(campaign.countries), list(campaign.sources), campaign.schedule_days,
-                      campaign.daily_lead_limit, campaign.min_score)
+    if campaign.configured and not campaign.countries:
+        # The admin withdrew every country this agent used: it needs choosing again.
+        campaign.configured = False
+        campaign.enabled = False
+    return before != (list(campaign.countries), list(campaign.sources), campaign.daily_lead_limit,
+                      campaign.min_score, campaign.configured, campaign.enabled)
+
+
+def setup_problems(campaign: Campaign) -> list[str]:
+    """What the user still has to choose before this agent can run."""
+    import re
+
+    todo = []
+    if not campaign.countries:
+        todo.append("countries")
+    if not (campaign.rotate_cities or campaign.locations):
+        todo.append("cities")
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", campaign.schedule_time or ""):
+        todo.append("start time")
+    if not campaign.schedule_days:
+        todo.append("days")
+    return todo
 
 
 def starter_campaign(db: Session, owner_id: int, bot_key: str) -> Campaign | None:
-    """Give a customer their ready-made agent the first time they unlock a bot.
+    """Give a user their agent the first time they unlock a bot.
 
-    There is exactly one agent per bot and customers cannot create more: what
-    it searches is set on the bot by the admin.
+    There is exactly one agent per bot and users cannot create more. It starts
+    empty and switched off: the user chooses the countries, cities, start time
+    and days. The bot only fixes the limits (which countries are available,
+    where it searches, the most leads per run).
     """
     from app.services import billing, catalog
 
@@ -181,10 +207,10 @@ def starter_campaign(db: Session, owner_id: int, bot_key: str) -> Campaign | Non
     billing.fill_agent_defaults(bot)
     campaign = Campaign(
         owner_id=owner_id, name=catalog.label_for(bot_key), service_category=bot_key,
-        sources=list(bot.sources or []), countries=list(bot.countries), locations=[],
-        rotate_cities=True, city_history={}, schedule_time=bot.schedule_time,
-        schedule_days=bot.schedule_days, min_score=bot.min_score, keywords=[], industries=[],
-        enabled=True, approval_mode="manual",
+        sources=list(bot.sources or []), countries=[], locations=[],
+        rotate_cities=False, city_history={}, schedule_time="", schedule_days="",
+        min_score=bot.min_score, keywords=[], industries=[],
+        enabled=False, configured=False, approval_mode="manual",
         daily_lead_limit=bot.leads_per_run, daily_email_limit=bot.leads_per_run,
     )
     db.add(campaign)

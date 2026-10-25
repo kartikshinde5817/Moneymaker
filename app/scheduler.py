@@ -51,7 +51,7 @@ def _run(campaign_id: int) -> None:
             if owner is not None and owner.status != "active":
                 log.info("campaign %s skipped: owner account is %s", campaign_id, owner.status)
                 return
-            if campaign and campaign.enabled:
+            if campaign and campaign.enabled and campaign.configured:
                 pipeline.run_campaign(db, campaign, trigger="scheduled")
     except Exception:
         log.exception("scheduled campaign %s failed", campaign_id)
@@ -116,7 +116,7 @@ def upcoming(db: Session, campaigns: list[Campaign] | None = None) -> list[dict]
         campaigns = db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars().all()
     zones = _timezones(db)
     out = []
-    for c in (c for c in campaigns if c.enabled):
+    for c in (c for c in campaigns if c.enabled and c.configured):
         job = _scheduler.get_job(f"campaign:{c.id}") if _scheduler else None
         at = job.next_run_time if job else None
         if at is None:
@@ -143,7 +143,8 @@ def reschedule() -> None:
         if job.id.startswith("campaign:"):
             job.remove()
     with session_scope() as db:
-        campaigns = db.execute(select(Campaign).where(Campaign.enabled.is_(True))).scalars().all()
+        campaigns = db.execute(select(Campaign).where(
+            Campaign.enabled.is_(True), Campaign.configured.is_(True))).scalars().all()
         zones = _timezones(db)
         for c in campaigns:
             try:

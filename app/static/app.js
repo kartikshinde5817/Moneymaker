@@ -23,7 +23,8 @@ const SOURCE_LABEL = {
   serp: 'Web search', serper: 'Web search', yelp: 'Yelp', github: 'GitHub',
   contracts_finder: 'Contracts Finder', find_a_tender: 'Find a Tender',
   sam_gov: 'SAM.gov', adzuna: 'Adzuna', openstreetmap: 'OpenStreetMap',
-  linkedin_search: 'LinkedIn (via search)',
+  linkedin_search: 'LinkedIn (via search)', serper_places: 'Google Maps (via Serper)',
+  brave_search: 'Brave search', maps: 'Google Maps',
 };
 const BUILTIN_SERVICE = { ...SERVICE_LABEL };
 
@@ -123,9 +124,9 @@ const fmtTime = s => !s ? '—' : new Date(s).toLocaleString(undefined, { day: '
 
 const NAV = [
   { group: 'Workspace', ws: true },
+  { key: 'dashboard', ws: true, label: 'Dashboard', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2' },
   { key: 'workflow', ws: true, label: 'Agent', icon: 'M5 3v4a2 2 0 002 2h3m4 0h3a2 2 0 002-2V3M5 21v-4a2 2 0 012-2h10a2 2 0 012 2v4M12 9v6' },
   { key: 'outbox', ws: true, label: 'Outbox', icon: 'M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z' },
-  { key: 'dashboard', ws: true, label: 'Dashboard', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2' },
   { key: 'linkedin', ws: true, label: 'LinkedIn', icon: 'M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-4 0v7h-4v-11h4v2a4 4 0 014-2zM2 9h4v12H2zM4 2a2 2 0 110 4 2 2 0 010-4z' },
   { key: 'whatsapp', ws: true, label: 'WhatsApp', icon: 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z' },
   { key: 'leads', ws: true, label: 'Leads', icon: 'M3 6h18M3 12h18M3 18h12' },
@@ -136,7 +137,7 @@ const NAV = [
   { key: 'account', label: 'Settings', customer: true, icon: 'M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h3m12 0h3M12 3v3m0 12v3' },
   { group: 'Platform', admin: true },
   { key: 'admin', label: 'Overview', admin: true, icon: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z' },
-  { key: 'customers', label: 'Customers', admin: true, icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
+  { key: 'customers', label: 'Users', admin: true, icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
   { key: 'adminbots', label: 'Bots & pricing', admin: true, icon: 'M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L2 12V2h10l8.6 8.6a2 2 0 010 2.8zM7 7h.01' },
   { key: 'payments', label: 'Payments', admin: true, icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6' },
   { key: 'settings', label: 'Settings', admin: true, icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6' },
@@ -145,7 +146,7 @@ const NAV = [
 const isAdmin = () => !!(META.user && META.user.role === 'admin');
 
 // The admin runs the platform and has no workspace of its own: its sidebar is
-// the admin panel only. Customers never see the admin pages.
+// the admin panel only. Users never see the admin pages.
 const navItems = () => NAV.filter(n => isAdmin() ? n.admin : !n.admin);
 const ADMIN_VIEWS = new Set(NAV.filter(n => n.admin && n.key).map(n => n.key));
 
@@ -183,19 +184,19 @@ function systemChecks(o) {
   if (o) list.unshift(
     { name: 'Account emails', ok: !!o.account_mail_ready, icon: 'M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z',
       on: 'Sign-up confirmations and password resets can be sent',
-      off: 'Not set, so customers can\'t reset passwords or confirm their email. Set SMTP_HOST, SMTP_USER, SMTP_PASS and SENDER_EMAIL.' },
+      off: 'Not set, so users can\'t reset passwords or confirm their email. Set SMTP_HOST, SMTP_USER, SMTP_PASS and SENDER_EMAIL.' },
     { name: 'Payments', ok: !!o.razorpay_ready, icon: 'M2 7h20v12H2zM2 11h20M6 15h4',
-      on: 'Razorpay is connected, so customers can subscribe online',
-      off: 'Customers cannot pay yet. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.' },
+      on: 'Razorpay is connected, so users can subscribe online',
+      off: 'Users cannot pay yet. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.' },
     { name: 'Payment webhook', ok: !!o.webhook_ready, icon: 'M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7',
-      on: 'Payments are confirmed even if the customer closes the tab',
+      on: 'Payments are confirmed even if the user closes the tab',
       off: 'Set RAZORPAY_WEBHOOK_SECRET so no payment is missed.' });
   return list;
 }
 
 function renderFoot() {
   const c = (ok, on, off) => `<span class="chip ${ok ? 'ok' : 'off'}"><span class="dot"></span>${ok ? on : off}</span>`;
-  if (!isAdmin()) {  // customers see only what concerns their own setup
+  if (!isAdmin()) {  // users see only what concerns their own setup
     $('#foot').innerHTML = c(META.email_ready, 'Mailbox connected', 'No mailbox connected') +
       c(META.inbox_ready, 'Replies are watched', 'Replies not watched');
     return;
@@ -462,7 +463,7 @@ VIEWS.workflow = async function () {
       <div class="row">
         ${camps.length ? `
         <select id="wfCamp" class="btn" style="padding:7px 10px" aria-label="Agent to run">
-          ${camps.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+          ${camps.map(c => `<option value="${c.id}"${c.configured ? '' : ' disabled'}>${esc(c.name)}${c.configured ? '' : ' — set up first'}</option>`).join('')}
         </select>
         <button class="btn go" id="wfRun">▶ Run agent</button>` : ''}
       </div>
@@ -1328,16 +1329,18 @@ function campCard(c, i) {
       <div class="camp-top">
         <span class="camp-ico">${svgIcon(svcIcon(c.service_category), 18)}</span>
         <div class="camp-name"><b>${esc(c.name)}</b><small>${esc(SERVICE_LABEL[c.service_category] || c.service_category)}${c.locked ? ' · <span class="lockt">locked — subscription ended</span>' : ''}</small></div>
-        <label class="sw" title="${c.enabled ? 'On — click to pause' : 'Paused — click to switch on'}">
-          <input type="checkbox" ${c.enabled ? 'checked' : ''} onchange="toggleCampaign(${c.id}, this.checked)" aria-label="Enabled"><i></i></label>
+        <label class="sw" title="${!c.configured ? 'Set the agent up first' : c.enabled ? 'On — click to pause' : 'Paused — click to switch on'}">
+          <input type="checkbox" ${c.enabled ? 'checked' : ''} ${c.configured ? '' : 'disabled'} onchange="toggleCampaign(${c.id}, this.checked)" aria-label="Enabled"><i></i></label>
       </div>
+      ${c.configured ? '' : `<div class="camp-setup"><b>Needs setup</b> Choose your ${esc((c.needs_setup || []).join(', '))} to switch it on.</div>`}
       <div class="camp-when">
-        ${svgIcon(NODE_ICONS.clock)} ${esc(DAYS_LABEL[c.schedule_days] || c.schedule_days)} · ${esc(c.schedule_time)}
-        ${c.running ? '<span class="nx live">Running now</span>'
+        ${c.configured ? `${svgIcon(NODE_ICONS.clock)} ${esc(DAYS_LABEL[c.schedule_days] || c.schedule_days)} · ${esc(c.schedule_time)}` : ''}
+        ${!c.configured ? '<span class="nx off">Not set up</span>'
+          : c.running ? '<span class="nx live">Running now</span>'
           : c.enabled && c.next_run ? `<span class="nx">Next: ${fmtWhen(c.next_run)}</span>`
           : '<span class="nx off">Paused</span>'}
       </div>
-      <div class="camp-chips">${countries.slice(0, 8).map(k =>
+      <div class="camp-chips">${!countries.length ? '<span class="muted" style="font-size:12px">No countries chosen yet</span>' : ''}${countries.slice(0, 8).map(k =>
         `<span class="tag" title="${esc((names[k] || {}).name || k)}">${esc(k)}</span>`).join('')}${
         countries.length > 8 ? `<span class="tag grey">+${countries.length - 8}</span>` : ''}</div>
       <div class="camp-chips">${(c.sources || []).length ? c.sources.map(s => {
@@ -1353,8 +1356,8 @@ function campCard(c, i) {
       <div class="camp-foot">
         ${c.last_run ? `<span class="muted">Last run ${fmtTime(c.last_run.started_at)}</span>` : '<span class="muted">Never run</span>'}
         <span class="sp"></span>
-        <button class="btn sm" onclick="openCampaign(${c.id})">Edit</button>
-        ${c.locked
+        <button class="btn sm${c.configured ? '' : ' primary'}" onclick="openCampaign(${c.id})">${c.configured ? 'Edit' : 'Set up'}</button>
+        ${!c.configured ? '' : c.locked
           ? `<button class="btn sm primary" onclick="go('bots')">🔒 Unlock bot</button>`
           : c.running
           ? `<button class="btn sm danger" ${c.stopping ? 'disabled' : ''} onclick="stopRun(${c.id})">${c.stopping ? '<span class="spin dark"></span> Stopping…' : '■ Stop'}</button>`
@@ -1565,20 +1568,23 @@ const chk = (value, label, on, sub = '', dim = false) =>
 
 function paintCampaignEditor() {
   const c = _ce;
-  // The bot sets what its agent may do; the editor only offers what fits.
+  // The bot sets the limits (which countries exist for it, where it searches, the
+  // most leads); everything else is the user's own choice and starts empty.
   const limits = ((META.bots || []).find(b => b.key === c.service_category) || {}).agent
-    || { countries: Object.keys(META.country_policy || {}), sources: [], schedule_days: c.schedule_days, leads_per_run: 500, min_score: 0 };
+    || { countries: Object.keys(META.country_policy || {}), sources: [], leads_per_run: 500, min_score: 0 };
   const myBot = ((META.bots || []).find(b => b.key === c.service_category) || {}).name
     || SERVICE_LABEL[c.service_category] || c.service_category;
   const sec = (n, title, body) => `<div class="ce-sec" style="--i:${n}"><h4><span>${n}</span>${title}</h4>${body}</div>`;
+  const mode = c.rotate_cities ? 'rotate' : (c.locations || []).length ? 'pick' : '';
 
   $('#drawer').innerHTML = `
     <div class="ce-head" id="ceHead">
       <span class="ce-ico">${svgIcon(svcIcon(c.service_category), 20)}</span>
-      <div style="min-width:0"><span class="ce-kicker">Edit agent</span>
+      <div style="min-width:0"><span class="ce-kicker">${c.configured ? 'Edit agent' : 'Set up your agent'}</span>
         <h2>${esc(c.name)}</h2></div>
       <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button>
     </div>
+    <div class="ce-todo" id="ceTodo"></div>
 
     ${sec(1, 'Basics', `
       <div class="grid2">
@@ -1589,16 +1595,16 @@ function paintCampaignEditor() {
           <span class="fine">Each agent stays with the bot it came with.</span></div>
       </div>
       <div class="svc-hint" id="ceSvcHint"></div>
-      <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceEnabled" ${c.enabled ? 'checked' : ''}><i></i></span>
-        Enabled — runs automatically on its schedule</label>`)}
+      <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceEnabled" ${c.enabled || !c.configured ? 'checked' : ''}><i></i></span>
+        Run automatically on its schedule once it is set up</label>`)}
 
     ${sec(2, 'Schedule', `
       <div class="grid2">
         <div class="inp"><label for="ceTime">Start time${META.timezone ? ` (${esc(META.timezone)})` : ''}</label>
-          <input type="time" id="ceTime" value="${esc(c.schedule_time)}"></div>
-        <div class="inp"><label>Days</label>
-          <div style="pointer-events:none;opacity:.75">${seg('ceDays', DAYS_LABEL, limits.schedule_days)}</div>
-          <span class="fine">Set by your plan: ${esc(DAYS_LABEL[limits.schedule_days] || limits.schedule_days)}.</span></div>
+          <input type="time" id="ceTime" value="${esc(c.schedule_time || '')}">
+          <span class="fine">${c.schedule_time ? '' : 'Choose when it should start each day.'}</span></div>
+        <div class="inp"><label>Days</label>${seg('ceDays', DAYS_LABEL, c.schedule_days || '')}
+          <span class="fine">${c.schedule_days ? '' : 'Choose the days it should run.'}</span></div>
       </div>
       <div class="inp" style="margin-top:14px"><label>Approval</label>
         ${seg('ceApproval', { manual: 'Manual — I approve each email', auto: 'Auto-send' }, c.approval_mode)}
@@ -1613,20 +1619,17 @@ function paintCampaignEditor() {
       <div class="chips" id="ceCountries">${Object.entries(META.country_policy || {})
         .filter(([code]) => limits.countries.includes(code)).map(([code, p]) =>
         chk(code, p.name || code, (c.countries || []).includes(code), code)).join('')}</div>
-      <span class="fine" style="display:block;margin:10px 0 12px">Your plan covers these countries. Pick the ones this agent should search.</span>
-      <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceRotate" ${c.rotate_cities ? 'checked' : ''} onchange="ceRotateChanged()"><i></i></span>
-        Rotate cities — search new cities from these countries every run</label>
-      <div class="inp" style="margin-top:12px"><label for="ceLocations">Locations</label>
-        <input id="ceLocations" value="${esc((c.locations || []).join(', '))}" placeholder="London, Manchester" ${c.rotate_cities ? 'disabled' : ''}>
-        <span class="fine" id="ceLocHint"></span></div>
-      <div class="inp" style="margin-top:12px"><label for="ceKeywords">Keywords</label>
+      <span class="fine" style="display:block;margin:10px 0 14px">Your plan covers these countries. Choose the ones this agent should search.</span>
+      <div class="inp"><label>Cities</label>${seg('ceCityMode', { pick: 'I will choose the cities', rotate: 'Rotate through them for me' }, mode)}</div>
+      <div id="ceCityBox" style="margin-top:12px"></div>
+      <div class="inp" style="margin-top:14px"><label for="ceKeywords">Keywords <span class="opt">optional</span></label>
         <input id="ceKeywords" value="${esc((c.keywords || []).join(', '))}" placeholder="Leave empty to use the built-in keywords for this service">
         <span class="fine">Comma-separated search phrases, e.g. new website, online booking system.</span></div>`)}
 
-    ${sec(4, 'Lead sources', `
-      <p class="fine" style="margin:0 0 10px">Where this agent looks is set by your plan.</p>
+    ${sec(4, 'Lead platforms', `
+      <p class="fine" style="margin:0 0 10px">The platforms this bot searches are set by your plan.</p>
       <div class="camp-chips">${(limits.sources || []).length ? limits.sources.map(k =>
-        `<span class="pill sent">${esc(SOURCE_LABEL[k] || k)}</span>`).join('') : '<span class="pill scored">All available sources</span>'}</div>`)}
+        `<span class="pill sent">${esc(SOURCE_LABEL[k] || k)}</span>`).join('') : '<span class="pill scored">All available platforms</span>'}</div>`)}
 
     ${sec(5, 'Quality &amp; volume', `
       <div class="grid2">
@@ -1639,10 +1642,10 @@ function paintCampaignEditor() {
       </div>`)}
 
     <div class="ce-foot">
-      <button class="btn primary" id="ceSave" onclick="saveCampaign()">Save changes</button>
+      <button class="btn primary" id="ceSave" onclick="saveCampaign()">${c.configured ? 'Save changes' : 'Save and switch on'}</button>
       <button class="btn" onclick="closeDrawer()">Cancel</button>
       <span class="sp"></span>
-      <button class="btn" onclick="runCampaign(${c.id})">▶ Run now</button>
+      <button class="btn" id="ceRun" onclick="runCampaign(${c.id})">▶ Run now</button>
     </div>`;
 
   const d = $('#drawer');
@@ -1651,73 +1654,153 @@ function paintCampaignEditor() {
     const b = e.target.closest('button');
     if (!b) return;
     g.querySelectorAll('button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
+    if (g.id === 'ceCityMode') ceRenderCities();
+    ceTodo();
   });
   d.querySelectorAll('.chips').forEach(box => box.onclick = e => {
     const b = e.target.closest('.chk');
     if (!b) return;
+    if (box.id === 'ceCountries') ceKeepCities();
     b.classList.toggle('on');
     b.setAttribute('aria-pressed', b.classList.contains('on'));
+    if (box.id === 'ceCountries') ceRenderCities();
+    ceTodo();
   });
+  d.addEventListener('input', ceTodo);
+  _ceCities = [...(c.locations || [])];
   ceServiceHint();
-  ceRotateChanged();
+  ceRenderCities();
+  ceTodo();
+}
+
+let _ceCities = [];
+
+// Cities the user can tick, from the countries they have chosen.
+function ceRenderCities() {
+  const box = $('#ceCityBox');
+  if (!box) return;
+  const mode = ($('#ceCityMode .on') || {}).dataset ? $('#ceCityMode .on').dataset.v : '';
+  if (mode === 'rotate') {
+    box.innerHTML = '<p class="fine" style="margin:0">Each run it searches the next cities in your chosen countries that it has not covered yet, so you keep finding new businesses.</p>';
+    return;
+  }
+  if (mode !== 'pick') {
+    box.innerHTML = '<p class="fine" style="margin:0">Choose how this agent picks cities.</p>';
+    return;
+  }
+  const picked = [...document.querySelectorAll('#ceCountries .chk.on')].map(b => b.dataset.v);
+  const pool = META.city_pool || {};
+  const names = META.country_policy || {};
+  const groups = picked.map(code => `<div style="margin-bottom:10px"><div class="ce-lbl" style="margin-bottom:6px">${esc((names[code] || {}).name || code)}</div>
+    <div class="chips">${(pool[code] || []).map(city => chk(city, city, _ceCities.includes(city))).join('')}</div></div>`).join('');
+  const known = new Set(picked.flatMap(code => pool[code] || []));
+  const extra = _ceCities.filter(x => !known.has(x));
+  box.innerHTML = (picked.length ? groups : '<p class="fine" style="margin:0 0 8px">Choose a country above to see its cities.</p>') + `
+    <div class="inp"><label for="ceLocations">Other cities or towns <span class="opt">optional, comma-separated</span></label>
+      <input id="ceLocations" value="${esc(extra.join(', '))}" placeholder="e.g. Harrogate, Pune"></div>`;
+  box.querySelectorAll('.chips').forEach(ch => ch.onclick = e => {
+    const b = e.target.closest('.chk');
+    if (!b) return;
+    b.classList.toggle('on');
+    b.setAttribute('aria-pressed', b.classList.contains('on'));
+    ceKeepCities();
+    ceTodo();
+  });
+}
+
+// Remember the ticked cities before the list is redrawn for different countries.
+function ceKeepCities() {
+  const box = $('#ceCityBox');
+  if (!box || !box.querySelector('.chips')) return;
+  const ticked = [...box.querySelectorAll('.chk.on')].map(b => b.dataset.v);
+  const shown = [...box.querySelectorAll('.chk')].map(b => b.dataset.v);
+  const extra = ($('#ceLocations') ? $('#ceLocations').value : '').split(',').map(x => x.trim()).filter(Boolean);
+  _ceCities = [..._ceCities.filter(x => !shown.includes(x) && !extra.includes(x)), ...ticked, ...extra];
+}
+
+function ceCities() {
+  const mode = $('#ceCityMode .on') ? $('#ceCityMode .on').dataset.v : '';
+  if (mode !== 'pick') return [];
+  ceKeepCities();
+  const countries = [...document.querySelectorAll('#ceCountries .chk.on')].map(b => b.dataset.v);
+  const pool = META.city_pool || {};
+  const inScope = new Set(countries.flatMap(code => pool[code] || []));
+  const allPool = new Set(Object.values(pool).flat());
+  // Ticked cities of a country that was un-ticked are dropped; typed-in ones stay.
+  return [...new Set(_ceCities.filter(x => inScope.has(x) || !allPool.has(x)))];
+}
+
+// What still has to be chosen, shown live at the top so nothing is a surprise.
+function ceTodo() {
+  const box = $('#ceTodo');
+  if (!box) return;
+  const f = ceRead(true);
+  const todo = [];
+  if (!f.countries.length) todo.push('countries');
+  if (!(f.rotate_cities || f.locations.length)) todo.push('cities');
+  if (!f.schedule_time) todo.push('start time');
+  if (!f.schedule_days) todo.push('days');
+  box.className = 'ce-todo' + (todo.length ? ' on' : '');
+  box.innerHTML = todo.length
+    ? `<b>Still to choose:</b> ${todo.map(t => `<span>${t}</span>`).join('')}<small>Your agent switches on when these are chosen.</small>` : '';
+  const run = $('#ceRun');
+  if (run) run.disabled = todo.length > 0 || !_ce.configured;
 }
 
 function ceAllCountries(on) {
+  ceKeepCities();
   document.querySelectorAll('#ceCountries .chk').forEach(b => {
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', on);
   });
+  ceRenderCities();
+  ceTodo();
 }
 
-function ceRotateChanged() {
-  const rotate = $('#ceRotate').checked;
-  $('#ceLocations').disabled = rotate;
-  $('#ceLocHint').textContent = rotate
-    ? 'Not used while city rotation is on.'
-    : 'Comma-separated. Leave empty to use each source’s default area.';
-}
-
-function ceRead() {
+function ceRead(quiet) {
   const c = _ce;
   const picked = id => [...document.querySelectorAll(`#${id} .chk.on`)].map(b => b.dataset.v);
   const listOf = id => $(id).value.split(',').map(s => s.trim()).filter(Boolean);
-  return {
+  const mode = $('#ceCityMode .on') ? $('#ceCityMode .on').dataset.v : '';
+  const body = {
     name: $('#ceName').value.trim(),
     service_category: $('#ceService').value,
     enabled: $('#ceEnabled').checked,
     schedule_time: $('#ceTime').value,
-    schedule_days: $('#ceDays .on').dataset.v,
+    schedule_days: $('#ceDays .on') ? $('#ceDays .on').dataset.v : '',
     approval_mode: $('#ceApproval .on').dataset.v,
     countries: picked('ceCountries'),
-    rotate_cities: $('#ceRotate').checked,
-    locations: listOf('#ceLocations'),
+    rotate_cities: mode === 'rotate',
+    locations: ceCities(),
     keywords: listOf('#ceKeywords'),
     sources: c.sources || [],
     min_score: +$('#ceScore').value,
     daily_lead_limit: +$('#ceLeads').value,
     daily_email_limit: c.daily_email_limit ?? 20,
   };
+  return body;
 }
 
 async function saveCampaign() {
   const c = _ce;
   const body = ceRead();
   if (!body.name) { toast('Give the agent a name', 'bad'); $('#ceName').focus(); return; }
-  if (!body.schedule_time) { toast('Pick a start time', 'bad'); $('#ceTime').focus(); return; }
-  if (!body.countries.length) { toast('Pick at least one country', 'bad'); return; }
   if (!(body.daily_lead_limit >= 1)) { toast('Leads per run must be at least 1', 'bad'); $('#ceLeads').focus(); return; }
+  const todo = [];
+  if (!body.countries.length) todo.push('countries');
+  if (!(body.rotate_cities || body.locations.length)) todo.push('cities');
+  if (!body.schedule_time) todo.push('start time');
+  if (!body.schedule_days) todo.push('days');
+  if (todo.length) body.enabled = false;  // saved as a draft; it switches on once everything is chosen
 
   const btn = $('#ceSave');
   btn.disabled = true;
   try {
-    if (c.id) {
-      await api(`/api/campaigns/${c.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-    } else {
-      await post('/api/campaigns', body);
-    }
-    toast(c.id ? 'Agent saved' : 'Agent created', 'good');
+    await api(`/api/campaigns/${c.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    toast(todo.length ? `Saved. Still to choose: ${todo.join(', ')}.` : (body.enabled ? 'Agent saved and switched on' : 'Agent saved'),
+      todo.length ? undefined : 'good');
     closeDrawer();
     if (VIEWS[VIEW]) VIEWS[VIEW]();
   } catch (e) {
@@ -1803,9 +1886,16 @@ VIEWS.settings = async function () {
     </div>
 
     <div class="card"><h3>Free keys — get these in order</h3>
-      <p class="hint">All free, and shared by every customer's agents. The top one matters most:
+      <p class="hint">All free, and shared by every user's agents. The top one matters most:
          every result it returns is a live website the audit can mine for an email address.</p>
       <div id="freeKeys">Loading…</div>
+    </div>
+
+    <div class="card"><h3>Lead platforms</h3>
+      <p class="hint">Every place the agents can look for leads. Add a key in the server's environment to switch a
+         platform on, then choose which bots use it under <a href="#adminbots">Bots &amp; pricing</a>. More platforms means
+         more and better leads, but each keyed one uses its own search quota.</p>
+      <div id="platforms">Loading…</div>
     </div>
 
     <div class="card"><h3>Credentials</h3>
@@ -1830,7 +1920,7 @@ VIEWS.settings = async function () {
         <div><div class="muted" style="font-size:11.5px">Cooling-off</div><b class="mono">${s.cooling_off_days} days</b></div>
         <div><div class="muted" style="font-size:11.5px">Min score to email</div><b class="mono">${s.min_score_to_email}</b></div>
       </div>
-      <p class="hint" style="margin:12px 0 0">Each customer sends from the mailbox they connect in their own Settings; these limits apply on top.</p>
+      <p class="hint" style="margin:12px 0 0">Each user sends from the mailbox they connect in their own Settings; these limits apply on top.</p>
     </div>
 
     <div class="card"><h3>Scheduled jobs</h3>
@@ -1853,6 +1943,15 @@ VIEWS.settings = async function () {
   try {
     const g = await api('/api/sources');
     const avail = Object.fromEntries(g.sources.map(x => [x.key, x]));
+    const rank = { High: 0, Good: 1, Fair: 2, Low: 3 };
+    $('#platforms').innerHTML = [...g.sources].sort((a, b) => (rank[a.quality] ?? 9) - (rank[b.quality] ?? 9)).map(x => `
+      <div class="plat">
+        <div class="plat-h"><b>${esc(SOURCE_LABEL[x.key] || x.label)}</b>
+          ${x.quality ? `<span class="tag grey">${esc(x.quality)} yield</span>` : ''}
+          <span class="pill ${x.available ? 'sent' : 'rejected'}">${x.available ? 'ready' : 'needs key'}</span></div>
+        <p>${esc(x.about || x.label)}</p>
+        ${!x.available && x.env ? `<div class="plat-k">Set <code>${esc(x.env)}</code>${x.signup ? ` · <a href="${esc(x.signup)}" target="_blank" rel="noopener noreferrer">get a free key ↗</a>` : ''}</div>` : ''}
+      </div>`).join('');
     $('#freeKeys').innerHTML = g.free_keys.map((k, i) => `
       <div class="row" style="align-items:flex-start;gap:9px;padding:9px 0;border-top:1px solid var(--line)">
         <b class="mono" style="min-width:18px;color:var(--muted)">${i + 1}</b>

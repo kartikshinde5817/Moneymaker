@@ -140,7 +140,7 @@ def delete_account(db: Session, user: User) -> dict:
     """
     uid = user.id
     if user.role != "customer" or uid == tenant.admin_id(db):
-        raise ValueError("Only customer accounts can be deleted.")
+        raise ValueError("Only user accounts can be deleted.")
     gone = counts(db, uid)
     own = lambda m: m.owner_id == uid  # noqa: E731
 

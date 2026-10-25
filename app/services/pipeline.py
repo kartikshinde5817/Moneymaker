@@ -30,7 +30,9 @@ from app.models import (
 from app.services import ai, cities, mailer, notify, ownership, scoring, whatsapp
 from app.services.compliance import ALLOWED, is_suppressed
 from app.services.discovery import REGISTRY, get_source
+from app.services.research import website_finder
 from app.services.research.audit import audit_website
+from app.services.research.fetcher import registrable_domain
 from app.services.resolution import upsert_company, upsert_contact
 from app.services.signals import (
     company_signals, get_or_create_source, signals_from_audit, store_raw_signals,
@@ -401,7 +403,8 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
     # Discovery sources hand back portal URLs and helpdesk addresses belonging
     # to somebody else. Auditing those would produce claims about a site the
     # prospect has never seen, so anything not provably theirs is discarded.
-    if company.website and not ownership.domain_belongs_to(company.name, company.website):
+    if (company.website and not prospect.extra.get("website_verified")
+            and not ownership.domain_belongs_to(company.name, company.website)):
         emit(f"    (ignoring {company.website} — not {company.name}'s own domain)")
         company.website = None
         company.primary_domain = None
@@ -425,6 +428,20 @@ def _process_prospect(db: Session, campaign: Campaign, prospect, emit, stats, tr
                 source_id=src.id, status="valid_syntax",
             )
             break
+
+    # The source named the business but gave no website or address to write to
+    # (job ads, tenders, registers). Look for its own site, so the audit can run
+    # and an email address can be found. Capped per run to keep runs quick.
+    if (not company.website and not contact and prospect.signals and settings.find_websites
+            and stats.get("site_lookups", 0) < 30):
+        stats["site_lookups"] = stats.get("site_lookups", 0) + 1
+        track.start("research", f"looking for {company.name}'s website")
+        found = website_finder.find_website(company.name, prospect.country)
+        if found:
+            company.website = found
+            company.primary_domain = registrable_domain(found)
+            stats["sites_found"] = stats.get("sites_found", 0) + 1
+            emit(f"    found website for {company.name}: {company.primary_domain}")
 
     # --- website audit --------------------------------------------------
     if company.website:

@@ -135,7 +135,7 @@ def customers(q: str = "", status: str = "", db: Session = Depends(get_db)):
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(or_(func.lower(User.email).like(like), func.lower(User.name).like(like),
-                              func.lower(User.company).like(like)))
+                              func.lower(User.company).like(like), User.phone.like(f"%{q.strip()}%")))
     if status:
         stmt = stmt.where(User.status == status)
     users = db.execute(stmt.order_by(User.created_at.desc()).limit(500)).scalars().all()
@@ -155,7 +155,7 @@ def customers(q: str = "", status: str = "", db: Session = Depends(get_db)):
     for u in users:
         access = billing.access_map(db, u.id)
         out.append({
-            "id": u.id, "name": u.name, "email": u.email, "company": u.company,
+            "id": u.id, "name": u.name, "email": u.email, "company": u.company, "phone": u.phone,
             "status": u.status, "created_at": _iso(u.created_at), "last_login_at": _iso(u.last_login_at),
             "access": access, "trial_bot": u.trial_bot, "trial_started_at": _iso(u.trial_started_at),
             "leads": leads.get(u.id, 0), "emails_sent": sent.get(u.id, 0), "paid": paid.get(u.id, {}),
@@ -166,7 +166,7 @@ def customers(q: str = "", status: str = "", db: Session = Depends(get_db)):
 def _customer(db: Session, user_id: int) -> User:
     user = db.get(User, user_id)
     if user is None or user.role != "customer":
-        raise HTTPException(404, "customer not found")
+        raise HTTPException(404, "user not found")
     return user
 
 
@@ -180,7 +180,8 @@ def customer_detail(user_id: int, db: Session = Depends(get_db)):
     camps = db.execute(select(Campaign).where(Campaign.owner_id == u.id)).scalars().all()
     runs = db.execute(select(func.count(CampaignRun.id)).where(CampaignRun.owner_id == u.id)).scalar_one()
     return {
-        "id": u.id, "name": u.name, "email": u.email, "company": u.company, "status": u.status,
+        "id": u.id, "name": u.name, "email": u.email, "company": u.company, "phone": u.phone,
+        "status": u.status,
         "email_verified": u.email_verified_at is not None, "terms_accepted_at": _iso(u.terms_accepted_at),
         "created_at": _iso(u.created_at), "last_login_at": _iso(u.last_login_at),
         "trial_bot": u.trial_bot, "trial_started_at": _iso(u.trial_started_at),

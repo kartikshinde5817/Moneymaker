@@ -40,6 +40,10 @@ button.main{width:100%;background:var(--ink);color:#fff;border:0;border-radius:1
 button.main:hover{background:#1A2536}
 button.main:disabled{opacity:.6;cursor:wait}
 .err{background:#FEF2F2;border:1px solid #FBD5D5;color:#9B1C1C;border-radius:10px;padding:10px 12px;font-size:13.5px;margin:-4px 0 16px;display:none}
+.phone{display:grid;grid-template-columns:152px minmax(0,1fr);gap:8px;margin-bottom:14px}
+.phone input{margin:0}
+.phone select{width:100%;padding:12px 8px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;background:#fff;color:var(--ink)}
+.phone select:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 4px rgba(6,182,212,.15)}
 .agree{display:flex;gap:9px;align-items:flex-start;font-weight:400;font-size:13px;color:var(--muted);margin:12px 0 4px;line-height:1.5}
 .agree input{width:auto;margin-top:3px;flex-shrink:0}
 .agree a{color:var(--brand-2);text-decoration:underline}
@@ -97,6 +101,11 @@ button.main:disabled{opacity:.6;cursor:wait}
     </div>
     <label for="sEmail">Work email</label>
     <input id="sEmail" type="email" autocomplete="email" placeholder="you@company.com">
+    <label for="sPhone">Mobile number</label>
+    <div class="phone">
+      <select id="sCode" aria-label="Country code" autocomplete="tel-country-code"></select>
+      <input id="sPhone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="98765 43210">
+    </div>
     <label for="sPw">Password</label>
     <input id="sPw" type="password" autocomplete="new-password" placeholder="At least 8 characters">
     <label class="agree"><input type="checkbox" id="sAgree"> <span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>
@@ -180,6 +189,18 @@ function home(role) {
   location.href = role === 'admin' ? '/app#admin' : (bot ? '/app#bots' : '/app');
 }
 
+// --- mobile number: country code, preselected from the browser's time zone ---
+const CODES = [['+91', 'India', 'Asia/Kolkata'], ['+1', 'US / Canada', 'America/'], ['+44', 'UK', 'Europe/London'],
+  ['+353', 'Ireland', 'Europe/Dublin'], ['+31', 'Netherlands', 'Europe/Amsterdam'], ['+33', 'France', 'Europe/Paris'],
+  ['+46', 'Sweden', 'Europe/Stockholm'], ['+971', 'UAE', 'Asia/Dubai'], ['+65', 'Singapore', 'Asia/Singapore'],
+  ['+61', 'Australia', 'Australia/'], ['+64', 'New Zealand', 'Pacific/Auckland'], ['+27', 'South Africa', 'Africa/Johannesburg']];
+(() => {
+  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+  const mine = (CODES.find(c => tz.startsWith(c[2])) || CODES[0])[0];
+  $('#sCode').innerHTML = CODES.map(([c, n]) => `<option value="${c}"${c === mine ? ' selected' : ''}>${c} ${n}</option>`).join('')
+    + '<option value="">Other (type + code)</option>';
+})();
+
 // --- sign in ---
 $('#goLogin').onclick = () => busy($('#goLogin'), async () => {
   err('#errLogin');
@@ -198,9 +219,11 @@ $('#goLogin').onclick = () => busy($('#goLogin'), async () => {
 $('#goSignup').onclick = () => busy($('#goSignup'), async () => {
   err('#errSignup');
   const body = { name: $('#sName').value.trim(), company: $('#sCompany').value.trim(),
-                 email: $('#sEmail').value.trim(), password: $('#sPw').value, accept_terms: $('#sAgree').checked };
+                 email: $('#sEmail').value.trim(), password: $('#sPw').value, accept_terms: $('#sAgree').checked,
+                 phone: $('#sPhone').value.trim(), phone_code: $('#sCode').value };
   if (body.name.length < 2) return err('#errSignup', 'Please enter your name.');
   if (!/^\S+@\S+\.\S+$/.test(body.email)) return err('#errSignup', 'Please enter a valid email address.');
+  if (body.phone.replace(/\D/g, '').length < 6) return err('#errSignup', 'Please enter your mobile number.');
   if (body.password.length < 8) return err('#errSignup', 'Use a password of at least 8 characters.');
   if (!body.accept_terms) return err('#errSignup', 'Please tick the box to accept the Terms and Privacy Policy.');
   try {
@@ -234,7 +257,7 @@ $('#goReset').onclick = () => busy($('#goReset'), async () => {
   } catch (e) { err('#errReset', e.message); }
 });
 ['#rPw', '#rPw2'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goReset').click(); }));
-['#sName', '#sCompany', '#sEmail', '#sPw'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goSignup').click(); }));
+['#sName', '#sCompany', '#sEmail', '#sPhone', '#sPw'].forEach(s => $(s).addEventListener('keydown', e => { if (e.key === 'Enter') $('#goSignup').click(); }));
 
 // --- admin 2FA ---
 $('#goCode').onclick = () => busy($('#goCode'), async () => {

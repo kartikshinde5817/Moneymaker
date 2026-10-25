@@ -92,6 +92,35 @@ def get_source(key: str) -> "DiscoverySource | None":
     return REGISTRY.get(key)
 
 
+# What each platform finds, how good it is, and which setting switches it on.
+# Shown on the admin Settings page so a new platform is never a mystery.
+SOURCE_INFO: dict[str, dict] = {
+    "serper": {"about": "People saying in their own words that they need what you sell, found through web search. Every result is a live website, so the email finder can start at once.",
+               "quality": "High", "env": "SERPER_API_KEY", "signup": "https://serper.dev"},
+    "serper_places": {"about": "Businesses listed on Google Maps with their address, phone and website. Best for Web Development and Digital Marketing: a business with no site, or only a Facebook page, is the evidence. Uses the same Serper key and credits.",
+                      "quality": "High", "env": "SERPER_API_KEY", "signup": "https://serper.dev"},
+    "brave_search": {"about": "The same \"who is asking for this\" searches, on Brave's own index. A second free quota and different results from Serper.",
+                     "quality": "Good", "env": "BRAVE_API_KEY", "signup": "https://brave.com/search/api/"},
+    "linkedin_search": {"about": "Public LinkedIn posts that state a need, found through a search engine. Nothing is scraped from LinkedIn.",
+                        "quality": "Good", "env": "SERPER_API_KEY", "signup": "https://serper.dev"},
+    "contracts_finder": {"about": "Open UK public-sector contracts that name the buyer and often a contact.",
+                         "quality": "Good", "env": "", "signup": ""},
+    "find_a_tender": {"about": "Higher-value UK public contracts.", "quality": "Good", "env": "", "signup": ""},
+    "sam_gov": {"about": "US federal opportunities.", "quality": "Good", "env": "SAM_GOV_API_KEY",
+                "signup": "https://sam.gov/content/api-keys"},
+    "adzuna": {"about": "Companies hiring for the skill you sell. Names the company but not its site, so the website finder looks it up.",
+               "quality": "Good", "env": "ADZUNA_APP_ID and ADZUNA_APP_KEY", "signup": "https://developer.adzuna.com"},
+    "companies_house": {"about": "Brand-new UK companies, which often have no website yet.",
+                        "quality": "Good", "env": "COMPANIES_HOUSE_KEY",
+                        "signup": "https://developer.company-information.service.gov.uk"},
+    "hacker_news": {"about": "Start-ups stating a gap on Hacker News.", "quality": "Fair", "env": "", "signup": ""},
+    "openstreetmap": {"about": "Free map data. Plenty of businesses but few have an email, so the yield is low.",
+                      "quality": "Low", "env": "", "signup": ""},
+    "github": {"about": "Organisations publishing code. Mostly finds competitors, not clients.",
+               "quality": "Low", "env": "", "signup": ""},
+}
+
+
 def available_sources() -> list[dict]:
     return [
         {
@@ -101,6 +130,8 @@ def available_sources() -> list[dict]:
             "available": s.available(),
             "countries": getattr(s, "countries", []),
             "services": getattr(s, "services", []),
+            **{"about": "", "quality": "", "env": "", "signup": ""},
+            **SOURCE_INFO.get(s.key, {}),
         }
         for s in REGISTRY.values()
     ]
