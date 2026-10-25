@@ -471,6 +471,26 @@ tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--brand-2)}
 .xfer-chips span{font-size:12.5px;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:20px;padding:4px 11px}
 .xfer-chips b{color:var(--ink);font-family:'Space Grotesk',sans-serif}
 
+.steps{display:grid;gap:0;margin-top:6px}
+.st-row{display:grid;grid-template-columns:62px minmax(0,1fr);gap:16px;padding:20px 8px;border-top:1px solid var(--line);border-radius:12px;transition:background .4s}
+.st-row:first-child{border-top:0}
+.st-row.hit{background:rgb(var(--acc-rgb) / .10);animation:stHit 2.2s ease-out}
+@keyframes stHit{0%{box-shadow:0 0 0 0 rgb(var(--acc-rgb) / .5)}60%{box-shadow:0 0 0 8px rgb(var(--acc-rgb) / 0)}}
+.st-n{position:relative;width:46px;height:46px}
+.st-ico{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:#0F141B;color:var(--c);box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 22%,transparent)}
+.st-n i{position:absolute;right:-6px;bottom:-4px;min-width:20px;height:20px;border-radius:10px;padding:0 5px;display:grid;place-items:center;background:var(--ink);color:#fff;font:700 11px 'Space Grotesk',sans-serif;font-style:normal;box-shadow:0 0 0 2px var(--panel)}
+.st-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.st-head h4{margin:0;font-family:'Space Grotesk',sans-serif;font-size:17px}
+.st-eng{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 7px}
+.st-run{margin-left:auto;font-size:12px;color:var(--muted)}.st-run b{color:var(--ink)}.st-run b.no{color:#B42318}
+.st-sub{margin:2px 0 8px;color:var(--muted);font-size:12.5px}
+.st-body p{margin:6px 0;font-size:13.5px;line-height:1.6;color:var(--ink-2)}
+.st-body p b{color:var(--ink)}
+.st-stop{padding:9px 12px;border-radius:10px;background:#FEF6F5;border:1px solid #F8D7D3}
+.st-stop b{color:#B42318!important}
+@media (max-width:640px){.st-row{grid-template-columns:1fr;gap:10px}.st-run{margin-left:0;width:100%}}
+.node{cursor:pointer}.node:focus-visible{outline:2px solid var(--acc);outline-offset:4px;border-radius:12px}
+
 /* ==================== campaigns ==================== */
 .camps{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:14px}
 .camp{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 16px 12px;cursor:pointer;

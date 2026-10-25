@@ -342,6 +342,110 @@ function animateNumber(node, to) {
   if (from) { node.classList.remove('bump'); void node.offsetWidth; node.classList.add('bump'); }
 }
 
+/* What each step really does, in plain words. This is the code's behaviour, so
+   it is written from pipeline.py, scoring.py and mailer.py: keep them in step. */
+const STEP_INFO = {
+  trigger: {
+    does: 'Starts the run. It fires at your agent\'s start time (or when you press Run agent), picks the cities to search today, rotating through your countries so each run looks at new ground, and lines up the sources the bot uses.',
+    stops: 'Nothing is turned away here. A run does not start if your plan for this bot has ended or the account is blocked.',
+  },
+  discovery: {
+    does: 'Asks each of the bot\'s sources for businesses that may need what you sell: web and LinkedIn search for people stating a need, public tenders, job ads, company registers and maps. Each hit becomes a prospect with a name, a website, a contact if one is public, and the text that made it match.',
+    stops: 'A source that fails or is not set up is skipped and the others carry on. The run ends once it has made your "leads per run" limit.',
+  },
+  resolution: {
+    does: 'Merges duplicates so you never get the same business twice, and checks that the website and email really belong to that business. Job portals, directories, helpdesks and social pages are never treated as "their website".',
+    stops: 'The company is already one of your leads. A website or address that is not theirs is thrown away and the prospect carries on without it.',
+  },
+  research: {
+    does: 'Visits the business\'s own website and checks it like a person would: does it work on a phone, is it secure, how fast and how old is it, can people book or buy, are there analytics, search tags and social links. It also looks for a real contact email on the page.',
+    stops: 'The business has no website and the source gave no evidence either, so there is nothing true to say. (No website at all is itself evidence when the source supplies it.)',
+  },
+  signals: {
+    does: 'Turns what was found into short, checkable facts called evidence, each with a link to where it came from. These facts are the only thing the email writer is allowed to use.',
+    stops: 'No evidence means no lead, whatever else is known. A prospect with no email and no phone is also dropped, because there would be no way to act on it.',
+  },
+  qualify: {
+    does: 'Screens for a genuine fit: is this really a buyer, or a competitor, a student project or the wrong kind of business?',
+    ai: 'An AI model reads the evidence and decides (paid, billed per use).',
+    free: 'Free mode: no AI is used. This step is skipped and the Scoring rules below do the screening, including a heavy penalty for anything that looks like a competing agency.',
+    stops: 'The AI judges it a competitor or not a fit.',
+    stopsFree: 'Nothing, in free mode: the step is skipped and nobody is turned away here. Competitors are caught by the penalty in Scoring.',
+  },
+  scoring: {
+    does: 'Adds up points from fixed rules, from 0 to 100. Examples: a publicly stated requirement +30, no working website +25, hiring for the skill +25, site not mobile friendly +15, a named decision-maker +10, a verified business email +8, looks like a competitor −40. The same evidence always gives the same score, and every point is listed on the lead.',
+    stops: 'The score is below your agent\'s minimum. The lead is kept for reference but nothing is written.',
+  },
+  personalize: {
+    does: 'Writes the email from the evidence only. Every claim cites a fact it found, and it may not say they asked for something unless they really did. Your name, company, website and postal address are filled in.',
+    ai: 'An AI model writes it (paid, billed per use).',
+    free: 'Free mode: a careful template is filled in with the evidence. No AI cost.',
+    stops: 'There is no email address (the lead is kept; a WhatsApp message may be prepared if there is a phone number), or the country does not allow cold email, so it becomes manual outreach.',
+  },
+  outbox: {
+    does: 'Holds the draft for your approval (or queues it straight away if you chose auto-send). The agent never sends by itself. When you approve, the system checks again before anything leaves: the country\'s email rules, your unsubscribe list, a 90-day cooling-off so nobody is emailed twice, that the address is valid, your daily limit and your mailbox\'s warm-up limit. An unsubscribe link and your postal address are added.',
+    stops: 'Any of those checks fails. The message is marked rejected, or held until the next day if it was only a daily limit.',
+  },
+};
+
+// The same nine steps the server runs (PIPELINE_STAGES in pipeline.py).
+const PIPELINE_ORDER = ['trigger', 'discovery', 'resolution', 'research', 'signals', 'qualify', 'scoring', 'personalize', 'outbox'];
+const PIPELINE_NODES = {
+  trigger: { label: 'Trigger', note: 'Schedule or manual', icon: 'trigger' },
+  discovery: { label: 'Discovery', note: 'Query lead sources', icon: 'search' },
+  resolution: { label: 'Resolution', note: 'Merge duplicates', icon: 'merge' },
+  research: { label: 'Research', note: 'Audit their website', icon: 'globe' },
+  signals: { label: 'Evidence', note: 'Extract quotable proof', icon: 'doc' },
+  qualify: { label: 'Qualify', note: 'Screen for genuine fit', icon: 'brain' },
+  scoring: { label: 'Scoring', note: 'Transparent rule score', icon: 'gauge' },
+  personalize: { label: 'Personalize', note: 'Write grounded outreach', icon: 'pen' },
+  outbox: { label: 'Outbox', note: 'Awaiting your approval', icon: 'inbox' },
+};
+
+function stepsCard() {
+  const rows = PIPELINE_ORDER.map((key, i) => {
+    const t = STEP_INFO[key], n = PIPELINE_NODES[key];
+    const engine = key === 'qualify' || key === 'personalize'
+      ? (META.ai_ready ? 'AI step' : 'Free mode')
+      : ({ trigger: 'System', discovery: 'Web & APIs', resolution: 'Rules', research: 'Web check', signals: 'Rules', scoring: 'Rules', outbox: 'System' })[key];
+    const how = t.ai ? `<p class="st-how"><b>How it runs:</b> ${esc(META.ai_ready ? t.ai : t.free)}</p>` : '';
+    return `<div class="st-row" id="step-${key}" data-k="${key}" style="--c:${tint(key)}">
+      <div class="st-n"><span class="st-ico">${svgIcon(NODE_ICONS[n.icon] || NODE_ICONS.doc, 19)}</span><i>${i + 1}</i></div>
+      <div class="st-body">
+        <div class="st-head"><h4>${esc(n.label)}</h4><span class="st-eng">${esc(engine)}</span><span class="st-run" data-run></span></div>
+        <p class="st-sub">${esc(n.note)}</p>
+        <p><b>What it does:</b> ${esc(t.does)}</p>${how}
+        <p class="st-stop"><b>Turns a prospect away when:</b> ${esc(!META.ai_ready && t.stopsFree ? t.stopsFree : t.stops)}</p>
+      </div></div>`;
+  }).join('');
+  return `<div class="card" style="margin-top:16px" id="stepsCard">
+    <h3>What each step does</h3>
+    <p class="hint">Every prospect goes through these nine steps in order. Each step can stop it, and the rules are enforced in code, not left to an AI to follow. Click any step in the pipeline above to jump here.</p>
+    <div class="steps">${rows}</div></div>`;
+}
+
+// Latest run's numbers beside each explanation, so the text and the pipeline agree.
+function renderSteps(nodes) {
+  (nodes || []).forEach(n => {
+    const box = document.querySelector(`#step-${n.key} [data-run]`);
+    if (!box) return;
+    const bits = [];
+    if (n.passed) bits.push(`<b>${n.passed.toLocaleString()}</b> passed`);
+    if (n.dropped) bits.push(`<b class="no">${n.dropped.toLocaleString()}</b> turned away`);
+    if (n.status === 'skipped') bits.push('skipped');
+    setHtml(box, bits.length ? 'Last run: ' + bits.join(' · ') : '');
+  });
+}
+
+// Pipeline icon -> its explanation.
+function focusStep(key) {
+  const row = document.getElementById('step-' + key);
+  if (!row) return;
+  row.scrollIntoView({ behavior: REDUCED_MOTION ? 'auto' : 'smooth', block: 'center' });
+  row.classList.remove('hit'); void row.offsetWidth; row.classList.add('hit');
+  setTimeout(() => row.classList.remove('hit'), 2200);
+}
+
 let _wfTimer = null, _wfTick = null, _wf = null, _heroKey = '', _flowKey = '', _wfSeq = 0;
 
 VIEWS.workflow = async function () {
@@ -365,23 +469,10 @@ VIEWS.workflow = async function () {
     </div>
     <div id="wfHero"></div>
     <div id="wfCanvas"></div>
-    <div class="grid2" style="margin-top:18px">
-      <div class="card"><h3>The gates that protect you</h3>
-        <p class="hint">Each of these can stop a prospect. They are enforced in code,
-           not by prompt instructions.</p>
-        ${[
-          ['Research', 'Ignores websites that are not provably theirs — a portal or a Deliveroo page never becomes "your website".'],
-          ['Evidence', 'Zero signals means no lead. The writer physically cannot be reached without a quotable fact.'],
-          ['Qualify', 'Drops competitors — a rival web agency is worse than no email.'],
-          ['Scoring', 'Below the campaign threshold, nothing is drafted.'],
-          ['Personalize', 'Sees only signal rows, must cite them, and cannot claim they asked unless they did.'],
-          ['Outbox', 'Country policy, suppression list and the 90-day cooling-off all checked before it leaves.'],
-        ].map(([k, v]) => `<div class="row" style="align-items:flex-start;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12.5px">
-            <span class="tag" style="flex-shrink:0">${k}</span><span class="muted" style="flex:1;min-width:0">${v}</span></div>`).join('')}
-      </div>
-      <div class="card"><h3>Where the drop-offs happen</h3>
-        <div id="wfDrops"></div></div>
-    </div>`;
+    ${stepsCard()}
+    <div class="card" style="margin-top:16px"><h3>Where the drop-offs happen</h3>
+      <p class="hint">Prospects an agent turned away in its latest run, and at which step.</p>
+      <div id="wfDrops"></div></div>`;
 
   const runBtn = $('#wfRun');
   if (runBtn) runBtn.onclick = async () => {
@@ -410,6 +501,7 @@ async function paintWorkflow(pre) {
   paintHero(wf, running);
   paintFlow(wf, running);
   renderDrops(wf.nodes || []);
+  renderSteps(wf.nodes || []);
 
   const btn = $('#wfRun');
   if (btn) {
@@ -577,7 +669,9 @@ function paintFlow(wf, running) {
         <div class="wf-rail" aria-hidden="true"><i></i></div>
         <div class="wf-flow">${nodes.map((n, i) => `
           ${i ? `<div class="conn" data-i="${i}" style="--c1:${tint(nodes[i - 1].key)};--c2:${tint(n.key)}"><span class="line"></span><b class="pkg"></b><b class="pkg"></b></div>` : ''}
-          <div class="node" data-k="${esc(n.key)}" style="--i:${i};--c:${tint(n.key)}">
+          <div class="node" data-k="${esc(n.key)}" style="--i:${i};--c:${tint(n.key)}" tabindex="0" role="button"
+               aria-label="What ${esc(n.label)} does" onclick="focusStep('${esc(n.key)}')"
+               onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();focusStep('${esc(n.key)}')}">
             <div class="nc">
               <svg class="ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" transform="rotate(-90 32 32)"/></svg>
               <span class="fx"><i></i><i></i><i></i></span>
@@ -627,7 +721,7 @@ function paintFlow(wf, running) {
     const keep = node.classList.contains('work') ? ' work' : '';
     const status = !running && n.status === 'running' ? (n.passed ? 'done' : 'idle') : n.status;
     node.className = `node ${status}${running && n.key === wf.active ? ' running' : ''}${keep}`;
-    node.title = n.note;
+    node.title = n.note + ' — click to read what this step does';
     animateNumber(node.querySelector('.cnt'), n.passed || 0);
     setHtml(node.querySelector('.nx'), n.dropped ? `<span class="drop" title="rejected here">✕ ${n.dropped}</span>` : '');
     const conn = i && canvas.querySelector(`.conn[data-i="${i}"]`);
