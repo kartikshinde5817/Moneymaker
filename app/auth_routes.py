@@ -273,6 +273,7 @@ def me(request: Request, db: Session = Depends(get_db)):
     user = auth.current_user(request, db)
     return {
         "authenticated": user is not None,
+        "id": user.id if user else None,
         "login_required": True,
         "role": user.role if user else None,
         "name": user.name if user else None,

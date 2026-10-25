@@ -98,6 +98,11 @@ async function _api(path, opts) {
         ? d.map(x => `${(x.loc || []).slice(-1)[0] || 'value'}: ${String(x.msg).replace(/^Value error, /, '')}`).join('; ')
         : d || m;
     } catch (e) { /* non-JSON error */ }
+    // This page was opened as one account but the browser is now signed in as
+    // another (a second tab signed in). Reload once to pick up who it really is.
+    if (r.status === 403 && /Only the platform admin/.test(m)) {
+      try { if (!sessionStorage.getItem('mm_reloaded')) { sessionStorage.setItem('mm_reloaded', '1'); location.reload(); } } catch (e) { /* private mode */ }
+    }
     throw new Error(m);
   }
   return (r.headers.get('content-type') || '').includes('json') ? r.json() : r.text();

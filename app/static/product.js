@@ -33,7 +33,8 @@ const initials = s => (s || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).ma
 async function refreshMeta() {
   META = await api('/api/meta', { quiet: true });
   syncServices();
-  renderFoot(); renderMe(); renderAccessBar(); renderNav(window._pending);
+  renderFoot(); renderMe(); renderAccessBar();
+  renderNav(window._pending);
 }
 
 /* ----------------------------------------------------------- sidebar user */
@@ -816,9 +817,32 @@ window.addEventListener('hashchange', () => {
   if (VIEWS[v] && v !== VIEW) go(v);
 });
 
+// One browser holds one sign-in per site. If this account is signed out, or
+// another account signs in from a second tab, this page would keep showing the
+// old account and every click would fail with a confusing error. So check on
+// returning to the tab, and reload as whoever is signed in now.
+function watchIdentity() {
+  const mine = META.user && META.user.id;
+  let busy = false;
+  const check = async () => {
+    if (busy || document.hidden) return;
+    busy = true;
+    try {
+      const me = await fetch('/auth/me', { cache: 'no-store' }).then(r => r.json());
+      if (!me.authenticated) location.href = '/login';
+      else if (me.id !== mine) location.reload();
+    } catch (e) { /* offline: try again later */ }
+    busy = false;
+  };
+  document.addEventListener('visibilitychange', check);
+  window.addEventListener('focus', check);
+  setInterval(check, 120000);
+}
+
 (async () => {
   try {
     META = await api('/api/meta');
+    try { sessionStorage.removeItem('mm_reloaded'); } catch (e) { /* private mode */ }
     syncServices();
     if (!isAdmin()) {
       const s = await api('/api/stats/summary', { quiet: true });
@@ -830,6 +854,7 @@ window.addEventListener('hashchange', () => {
     return;
   }
   renderFoot(); renderMe(); renderAccessBar();
+  watchIdentity();
   const hash = (location.hash || '').replace('#', '');
   const start = isAdmin() ? 'admin' : Object.keys(META.access || {}).length ? 'workflow' : 'bots';
   go(VIEWS[hash] ? hash : start);
