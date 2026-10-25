@@ -34,6 +34,19 @@ def _money(rows) -> dict:
     return {cur: round((amount or 0) / 100, 2) for cur, amount in rows if cur}
 
 
+def _mail_status() -> dict:
+    base = settings.public_base_url
+    return {"ready": platform_mail.ready(), "from": platform_mail.sender_address(),
+            "host": settings.smtp_host, "last": platform_mail.last_result, "base_url": base,
+            "base_url_local": any(h in base for h in ("127.0.0.1", "localhost")),
+            "enforced": platform_mail.verification_enforced()}
+
+
+@router.get("/mail-status")
+def mail_status():
+    return _mail_status()
+
+
 @router.get("/overview")
 def overview(db: Session = Depends(get_db)):
     now = utcnow()
@@ -109,6 +122,7 @@ def overview(db: Session = Depends(get_db)):
         "razorpay_ready": billing.razorpay_ready(),
         "webhook_ready": bool(settings.razorpay_webhook_secret),
         "account_mail_ready": platform_mail.ready(),
+        "account_mail": _mail_status(),
         # Agents, leads and emails still owned by the admin account, from
         # before the app had customers. The panel offers to move them.
         "admin_workspace": workspace.counts(db, tenant.admin_id(db)),
@@ -274,6 +288,22 @@ def reset_password(user_id: int, payload: ResetIn, db: Session = Depends(get_db)
     auth.destroy_all_sessions(db, u.id)
     db.commit()
     return {"ok": True}
+
+
+class TestMailIn(BaseModel):
+    to: str = Field(min_length=3, max_length=255)
+
+
+@router.post("/test-email")
+def test_email(payload: TestMailIn):
+    """Send a real message now and say exactly what went wrong if it fails."""
+    if "@" not in payload.to:
+        raise HTTPException(422, "Enter a valid email address.")
+    error = platform_mail.send_checked(
+        payload.to.strip(), f"Test email from {settings.platform_name}",
+        f"This is a test from {settings.platform_name}. If you can read this, sign-up confirmations "
+        f"and password resets can be delivered.\n")
+    return {"ok": error is None, "error": error, "from": platform_mail.sender_address()}
 
 
 class TransferIn(BaseModel):

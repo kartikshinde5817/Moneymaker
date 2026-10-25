@@ -152,7 +152,7 @@ def resend_verification(request: Request, db: Session = Depends(get_db)):
     if user.email_verified_at is not None:
         return {"ok": True, "already": True}
     ratelimit.hit(f"resend:{user.id}", 3, 3600, "You have asked for several emails already.")
-    sent = account_mail.send_verification(db, user)
+    sent = account_mail.send_verification(db, user, background=False)  # wait, so a failure is reported
     db.commit()
     if not sent:
         raise HTTPException(503, "We could not send email right now. Please try again in a few minutes.")

@@ -13,7 +13,7 @@ def _base() -> str:
     return settings.public_base_url.rstrip("/")
 
 
-def send_verification(db: Session, user: User) -> bool:
+def send_verification(db: Session, user: User, background: bool = True) -> bool:
     link = f"{_base()}/auth/verify?token={auth.issue_token(db, user, 'verify')}"
     name = (user.name or "there").split()[0]
     text = (f"Hi {name},\n\nWelcome to {settings.platform_name}. Please confirm your email address "
@@ -23,7 +23,8 @@ def send_verification(db: Session, user: User) -> bool:
         f"Hi {name}, welcome to {settings.platform_name}. Please confirm your email address so you can start your free trial.",
         "Confirm my email", link,
         "The link works for 48 hours. If you did not create this account, you can ignore this email.")
-    return platform_mail.send(user.email, f"Confirm your email for {settings.platform_name}", text, html)
+    return platform_mail.send(user.email, f"Confirm your email for {settings.platform_name}", text, html,
+                              background=background)
 
 
 def send_password_reset(db: Session, user: User) -> bool:

@@ -494,6 +494,7 @@ VIEWS.admin = async function () {
       <div class="row"><button class="btn" onclick="go('customers')">Customers</button><button class="btn primary" onclick="go('adminbots')">Bots & pricing</button></div></div>
     ${!o.razorpay_ready ? '<div class="banner bad">Razorpay is not connected, so customers cannot pay. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET on the server.</div>'
       : !o.webhook_ready ? '<div class="banner">Set RAZORPAY_WEBHOOK_SECRET so payments are confirmed even when a customer closes the tab before returning.</div>' : ''}
+    ${mailCard(o.account_mail, true)}
     ${transferCard(o.admin_workspace)}
     <div class="kpis k6">
       ${kpi('Customers', n(o.customers), { sub: `+${o.new_7d} this week · +${o.new_30d} this month`, icon: I.users, i: 0 })}
@@ -769,6 +770,47 @@ VIEWS.payments = async function () {
   $('#payS').onchange = e => { status = e.target.value; paint(); };
   await paint();
 };
+
+/* ------------------------------------------------------- account emails */
+
+// Whether sign-up confirmations and password resets can reach people, with a
+// button that sends a real test and shows the exact reason if it fails.
+function mailCard(m, onlyIfProblem = false) {
+  if (!m) return '';
+  const last = m.last || {};
+  const problem = !m.ready || m.base_url_local || last.ok === false;
+  if (onlyIfProblem && !problem) return '';
+  const row = (ok, text) => `<div class="mrow ${ok ? 'ok' : 'bad'}"><span>${ok ? '✓' : '✕'}</span><div>${text}</div></div>`;
+  return `<div class="card mailcard" id="mailCard">
+    ${cardHead('M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z', 'Account emails',
+      'Sign-up confirmations and password resets, sent from the server\'s own mailbox')}
+    ${row(m.ready, m.ready ? `Sending from <b>${esc(m.from)}</b> through ${esc(m.host)}`
+      : 'Not set up. On the server set <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code>, <code>SMTP_USE_SSL</code> and <code>SENDER_EMAIL</code>. Until then new accounts are accepted without confirming their email.')}
+    ${row(!m.base_url_local, m.base_url_local
+      ? `<code>PUBLIC_BASE_URL</code> is <b>${esc(m.base_url)}</b>, so the links in emails would point to nowhere. Set it to your live address.`
+      : `Links in emails open <b>${esc(m.base_url)}</b>`)}
+    ${last.ok === null || last.ok === undefined ? '' : row(last.ok, last.ok
+      ? `Last email went out ${esc(fmtTime(last.at))} to ${esc(last.to)}.`
+      : `Last attempt failed (${esc(fmtTime(last.at))}): ${esc(last.error)}`)}
+    <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+      <input id="mailTo" type="email" placeholder="your@email.com" value="${esc((META.user || {}).email || '')}" style="flex:1;min-width:220px;max-width:340px">
+      <button class="btn primary" id="mailTest" onclick="sendTestEmail()">Send a test email</button>
+    </div>
+    <div id="mailResult" class="hint" style="margin:10px 0 0"></div>
+  </div>`;
+}
+
+async function sendTestEmail() {
+  const to = $('#mailTo').value.trim(), out = $('#mailResult'), b = $('#mailTest');
+  if (!to) { out.textContent = 'Enter an address to send the test to.'; return; }
+  b.disabled = true; b.innerHTML = '<span class="spin"></span> Sending…'; out.textContent = '';
+  try {
+    const r = await post('/api/admin/test-email', { to });
+    out.innerHTML = r.ok ? `<b style="color:#067647">Sent from ${esc(r.from)}.</b> Check ${esc(to)} (and its spam folder).`
+      : `<b style="color:#B42318">Not sent:</b> ${esc(r.error)}`;
+  } catch (e) { out.innerHTML = `<b style="color:#B42318">${esc(e.message)}</b>`; }
+  b.disabled = false; b.textContent = 'Send a test email';
+}
 
 /* ------------------------------------------------- move the admin workspace */
 

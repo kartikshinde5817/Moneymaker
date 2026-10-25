@@ -1680,8 +1680,8 @@ async function dispatchNow() {
 
 VIEWS.settings = async function () {
   if (!isAdmin()) return go('account');  // server-wide settings are the admin's
-  const [s, sched, me] = await Promise.all([
-    api('/api/settings'), api('/api/scheduler'), api('/auth/me'),
+  const [s, sched, me, mailStatus] = await Promise.all([
+    api('/api/settings'), api('/api/scheduler'), api('/auth/me'), api('/api/admin/mail-status'),
   ]);
   const yn = v => v ? '<span class="pill sent">configured</span>' : '<span class="pill rejected">not set</span>';
 
@@ -1689,6 +1689,8 @@ VIEWS.settings = async function () {
     <div class="head"><div><h2>Platform</h2>
       <p>Server-wide configuration. Secrets live in the environment (Render's Environment
          tab or <code>.env</code>), never in the database; change them there and restart.</p></div></div>
+
+    ${mailCard(mailStatus)}
 
     <div class="card"><h3>Security</h3>
       <p class="hint">Password sign-in${me.login_required ? '' : ' is off — set ADMIN_PASSWORD in .env before putting this online'}.</p>
