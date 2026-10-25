@@ -348,7 +348,6 @@ VIEWS.workflow = async function () {
       <p>Every agent runs these nine stages for each prospect it finds. The numbers are real
          work from the latest run, and they stay here until the next agent starts.</p></div>
       <div class="row">
-        <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
         ${camps.length ? `
         <select id="wfCamp" class="btn" style="padding:7px 10px" aria-label="Agent to run">
           ${camps.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
@@ -480,8 +479,8 @@ function heroHtml(wf, running) {
     main = `
       <span class="pchip off"><span class="pd"></span>NO AGENT SCHEDULED</span>
       <h2 class="hx-title">Nothing queued</h2>
-      <div class="hx-meta">Create an agent, or switch one on in Campaigns.</div>
-      <button class="btn go" style="margin-top:16px" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} Create an agent</button>`;
+      <div class="hx-meta">Your agents run on their schedule. Switch one on in Campaigns, or unlock a bot.</div>
+      <button class="btn go" style="margin-top:16px" onclick="go('campaigns')">Open agents</button>`;
   }
 
   const queue = up.length ? up.slice(0, 6).map((u, i) => `
@@ -583,7 +582,6 @@ function paintFlow(wf, running) {
             <div class="nfoot"><b class="cnt zero">0</b><span class="nx"></span></div>
           </div>`).join('')}</div>
         <div class="wf-now" id="wfNow"></div>
-        <div class="wf-term" id="wfTerm" hidden></div>
         <div class="legend">
           <span><i style="background:var(--acc)"></i>Working now</span>
           <span><i style="background:#E8EEF4"></i>Done</span>
@@ -621,8 +619,7 @@ function paintFlow(wf, running) {
     const keep = node.classList.contains('work') ? ' work' : '';
     const status = !running && n.status === 'running' ? (n.passed ? 'done' : 'idle') : n.status;
     node.className = `node ${status}${running && n.key === wf.active ? ' running' : ''}${keep}`;
-    node.title = [n.detail || n.note,
-      n.ms ? `${n.ms > 1000 ? (n.ms / 1000).toFixed(1) + 's' : n.ms + 'ms'} spent here` : ''].filter(Boolean).join(' · ');
+    node.title = n.note;
     animateNumber(node.querySelector('.cnt'), n.passed || 0);
     setHtml(node.querySelector('.nx'), n.dropped ? `<span class="drop" title="rejected here">✕ ${n.dropped}</span>` : '');
     const conn = i && canvas.querySelector(`.conn[data-i="${i}"]`);
@@ -653,7 +650,7 @@ function paintFlow(wf, running) {
     const active = nodes.find(n => n.key === wf.active);
     now = `<span class="spin" style="border-top-color:#22D3EE;border-color:rgba(34,211,238,.3)"></span>
       <div style="min-width:0"><div><b>${esc(active ? active.label : 'Starting')}</b>${run.current_item ? ' — ' + esc(run.current_item) : ''}</div>
-      ${active && (active.detail || active.drop_detail) ? `<div class="wf-detail">${esc(active.detail || active.drop_detail)}</div>` : ''}</div>`;
+      </div>`;
   } else if (next) {
     now = `<span class="nx-ico">${svgIcon(NODE_ICONS.rocket, 15)}</span>
       <div style="min-width:0"><div>Next up: <b>${esc(next.name)}</b> · ${fmtWhen(next.at)} ·
@@ -661,21 +658,9 @@ function paintFlow(wf, running) {
       ${run ? `<div class="wf-detail">Last run: ${esc(run.campaign)} ${runEnded(run)} ${fmtTime(run.finished_at || run.started_at)}</div>` : ''}</div>`;
   } else {
     now = `<span class="nx-ico">${svgIcon(NODE_ICONS.rocket, 15)}</span>
-      <div>No agent is scheduled. Create one with <b>New agent</b>.</div>`;
+      <div>No agent is scheduled. Switch one on under <b>Campaigns</b>.</div>`;
   }
   setHtml($('#wfNow'), now);
-
-  const term = $('#wfTerm'), log = wf.log || [];
-  term.hidden = !log.length;
-  if (log.length) {
-    const html = log.map(colorLog).join('\n');
-    if (term._html !== html) {
-      const atBottom = !term._html || term.scrollHeight - term.scrollTop - term.clientHeight < 40;
-      term._html = html;
-      term.innerHTML = html;
-      if (atBottom) term.scrollTop = term.scrollHeight;
-    }
-  }
 }
 
 // One real event: prospects reached this step since the last poll. A package
@@ -704,14 +689,6 @@ function flash(el, cls, ms) {
   el['_' + cls] = setTimeout(() => el.classList.remove(cls), ms);
 }
 
-function colorLog(line) {
-  const e = esc(line);
-  if (/\bx\s|error|FAILED|refus/i.test(line)) return `<span class="no">${e}</span>`;
-  if (/^\s*\d\d:\d\d:\d\d\s+\s*\+/.test(line) || /scored|drafted/i.test(line)) return `<span class="ok">${e}</span>`;
-  if (/starting|Discovery finished|Done\./i.test(line)) return `<span class="hl">${e}</span>`;
-  return e;
-}
-
 function renderDrops(nodes) {
   const box = $('#wfDrops');
   if (!box) return;
@@ -724,17 +701,15 @@ function renderDrops(nodes) {
       <div class="row" style="justify-content:space-between;font-size:12.5px;margin-bottom:3px">
         <span>${esc(n.label)}</span><b class="mono">${n.dropped}</b></div>
       <div class="bar drop"><i style="width:${Math.round(n.dropped / max * 100)}%"></i></div>
-      ${n.drop_detail ? `<div class="muted" style="font-size:11px;margin-top:3px">Last: ${esc(n.drop_detail)}</div>` : ''}
     </div>`).join(''));
 }
 
 /* ------------------------------------------------------------- dashboard */
 
 VIEWS.dashboard = async function () {
-  const [s, byService, bySource, byIntent, runs] = await Promise.all([
+  const [s, byService, bySource, byIntent] = await Promise.all([
     api('/api/stats/summary'), api('/api/stats/breakdown?by=service'),
     api('/api/stats/breakdown?by=source'), api('/api/stats/breakdown?by=intent'),
-    api('/api/runs'),
   ]);
   window._pending = s.pending_approval;
 
@@ -781,17 +756,6 @@ VIEWS.dashboard = async function () {
       </div>`).join('')}</div>`;
   };
 
-  const runRows = runs.slice(0, 7).map(r => {
-    const st = r.stats || {};
-    return `<div class="lrow">
-      <span class="pill ${runPill(r.status)}">${r.status === 'cancelled' ? 'stopped' : esc(r.status)}</span>
-      <div class="who"><b>${esc(r.campaign)}</b><small>${r.trigger === 'scheduled' ? 'Scheduled' : 'Started by hand'} · ${fmtWhen(r.started_at)}</small></div>
-      <div class="num"><b>${n(st.leads_created)}</b><small>leads</small></div>
-      <div class="num"><b>${n(st.drafted)}</b><small>drafted</small></div>
-      <button class="btn sm" onclick="showRun(${r.id})">View log</button>
-    </div>`;
-  }).join('');
-
   const CHAT = 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z';
   $('#view').innerHTML = `
     <div class="head">
@@ -822,9 +786,7 @@ VIEWS.dashboard = async function () {
     <div class="grid2">
       <div class="card">${cardHead(NODE_ICONS.rocket, 'Leads by service')}${blist(byService, k => SERVICE_LABEL[k] || k, svcIcon)}</div>
       <div class="card">${cardHead(NODE_ICONS.search, 'Leads by source')}${blist(bySource, k => SOURCE_LABEL[k] || k)}</div>
-    </div>
-    <div class="card">${cardHead(NODE_ICONS.clock, 'Recent agent runs', '', '<button class="btn sm" onclick="go(\'campaigns\')">Campaigns</button>')}
-      ${runs.length ? runRows : none('No runs yet. Start one from Campaigns.')}</div>`;
+    </div>`;
   wireTips($('#view'));
 };
 
@@ -1231,19 +1193,17 @@ VIEWS.campaigns = async function () {
 
   $('#view').innerHTML = `
     <div class="head"><div><h2>Campaigns</h2>
-      <p>Each campaign is an agent with its own schedule, countries and sources. Click a card
-         to edit anything about it. Nothing is emailed when an agent runs — approved mail goes
-         out through the dispatcher, which runs every 10 minutes.</p></div>
+      <p>Each bot comes with its own agent. Click a card to change its start time, countries and
+         keywords within what your plan allows. Nothing is emailed when an agent runs — approved
+         mail goes out through the dispatcher, which runs every 10 minutes.</p></div>
       <div class="row">
-        <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button>
-        ${isAdmin() ? '<button class="btn" onclick="openServices()">Services</button>' : ''}
         ${META.send_on_server === false ? '' : '<button class="btn" onclick="dispatchNow()">Send queued now</button>'}
       </div>
     </div>
     ${list.length ? `<div class="camps">${list.map(campCard).join('')}</div>` : `
       <div class="card empty"><h3>No agents yet</h3>
-        <p>Create one to start finding leads.</p>
-        <button class="btn primary" onclick="openCampaign()">${svgIcon(NODE_ICONS.plus)} New agent</button></div>`}`;
+        <p>Your agent appears as soon as you unlock a bot.</p>
+        <button class="btn primary" onclick="go('bots')">Choose a bot</button></div>`}`;
 
   // The whole card opens the editor, except the controls inside it.
   $('#view').querySelectorAll('.camp').forEach(card => {
@@ -1289,10 +1249,8 @@ function campCard(c, i) {
         <div><b>${c.approval_mode === 'auto' ? 'Auto' : 'Manual'}</b><span>approval</span></div>
       </div>
       <div class="camp-foot">
-        ${c.last_run ? `<button class="camp-log" onclick="showRun(${c.last_run.id})" title="Open the log of the last run">Last run ${fmtTime(c.last_run.started_at)} ↗</button>`
-          : '<span class="muted">Never run</span>'}
+        ${c.last_run ? `<span class="muted">Last run ${fmtTime(c.last_run.started_at)}</span>` : '<span class="muted">Never run</span>'}
         <span class="sp"></span>
-        <button class="btn sm ghost icon" onclick="deleteCampaign(${c.id})" title="Delete this campaign" aria-label="Delete ${esc(c.name)}">${svgIcon(NODE_ICONS.trash)}</button>
         <button class="btn sm" onclick="openCampaign(${c.id})">Edit</button>
         ${c.locked
           ? `<button class="btn sm primary" onclick="go('bots')">🔒 Unlock bot</button>`
@@ -1477,6 +1435,7 @@ let _ce = null;  // the campaign open in the editor; id null while creating
 let _svcs = [];  // /api/services - what each service searches for
 
 async function openCampaign(id) {
+  if (!id) { toast('Agents come with your bots, so you can\'t create new ones. Unlock a bot to get its agent.', 'bad'); return; }
   const d = $('#drawer');
   d.classList.add('on'); $('#drawerBg').classList.add('on');
   d.innerHTML = '<div class="empty">Loading…</div>';
@@ -1503,15 +1462,19 @@ const chk = (value, label, on, sub = '', dim = false) =>
   `<button type="button" class="chk${on ? ' on' : ''}${dim ? ' dim' : ''}" data-v="${esc(value)}" aria-pressed="${on}">${esc(label)}${sub ? `<small>${esc(sub)}</small>` : ''}</button>`;
 
 function paintCampaignEditor() {
-  const c = _ce, isNew = !c.id;
-  const sources = META.sources || [];
+  const c = _ce;
+  // The bot sets what its agent may do; the editor only offers what fits.
+  const limits = ((META.bots || []).find(b => b.key === c.service_category) || {}).agent
+    || { countries: Object.keys(META.country_policy || {}), sources: [], schedule_days: c.schedule_days, leads_per_run: 500, min_score: 0 };
+  const myBot = ((META.bots || []).find(b => b.key === c.service_category) || {}).name
+    || SERVICE_LABEL[c.service_category] || c.service_category;
   const sec = (n, title, body) => `<div class="ce-sec" style="--i:${n}"><h4><span>${n}</span>${title}</h4>${body}</div>`;
 
   $('#drawer').innerHTML = `
     <div class="ce-head" id="ceHead">
       <span class="ce-ico">${svgIcon(svcIcon(c.service_category), 20)}</span>
-      <div style="min-width:0"><span class="ce-kicker">${isNew ? 'New agent' : 'Edit agent'}</span>
-        <h2>${isNew ? 'Create an agent' : esc(c.name)}</h2></div>
+      <div style="min-width:0"><span class="ce-kicker">Edit agent</span>
+        <h2>${esc(c.name)}</h2></div>
       <span class="sp"></span><button class="btn ghost" onclick="closeDrawer()">Close</button>
     </div>
 
@@ -1519,12 +1482,9 @@ function paintCampaignEditor() {
       <div class="grid2">
         <div class="inp"><label for="ceName">Name</label>
           <input id="ceName" value="${esc(c.name)}" maxlength="120" placeholder="e.g. UK restaurants — websites"></div>
-        <div class="inp"><label for="ceService" class="lbl-row">Bot (service it sells)
-            ${isAdmin() ? '<button type="button" class="linkbtn" onclick="serviceFromEditor(null)">＋ Add new service</button>' : '<a class="linkbtn" href="#bots" onclick="closeDrawer()">Get more bots</a>'}</label>
-          <select id="ceService">${(META.services || []).map(s => {
-            const open = isAdmin() || (META.access || {})[s.key] || s.key === c.service_category;
-            return `<option value="${esc(s.key)}" ${s.key === c.service_category ? 'selected' : ''} ${open ? '' : 'disabled'}>${esc(s.label)}${open ? '' : ' — locked'}</option>`;
-          }).join('')}</select></div>
+        <div class="inp"><label for="ceService">Bot</label>
+          <select id="ceService" disabled><option value="${esc(c.service_category)}" selected>${esc(myBot)}</option></select>
+          <span class="fine">Each agent stays with the bot it came with.</span></div>
       </div>
       <div class="svc-hint" id="ceSvcHint"></div>
       <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceEnabled" ${c.enabled ? 'checked' : ''}><i></i></span>
@@ -1534,7 +1494,9 @@ function paintCampaignEditor() {
       <div class="grid2">
         <div class="inp"><label for="ceTime">Start time${META.timezone ? ` (${esc(META.timezone)})` : ''}</label>
           <input type="time" id="ceTime" value="${esc(c.schedule_time)}"></div>
-        <div class="inp"><label>Days</label>${seg('ceDays', DAYS_LABEL, c.schedule_days)}</div>
+        <div class="inp"><label>Days</label>
+          <div style="pointer-events:none;opacity:.75">${seg('ceDays', DAYS_LABEL, limits.schedule_days)}</div>
+          <span class="fine">Set by your plan: ${esc(DAYS_LABEL[limits.schedule_days] || limits.schedule_days)}.</span></div>
       </div>
       <div class="inp" style="margin-top:14px"><label>Approval</label>
         ${seg('ceApproval', { manual: 'Manual — I approve each email', auto: 'Auto-send' }, c.approval_mode)}
@@ -1546,8 +1508,10 @@ function paintCampaignEditor() {
         <span><button type="button" class="btn sm ghost" onclick="ceAllCountries(true)">Select all</button>
           <button type="button" class="btn sm ghost" onclick="ceAllCountries(false)">Clear</button></span>
       </div>
-      <div class="chips" id="ceCountries">${Object.entries(META.country_policy || {}).map(([code, p]) =>
+      <div class="chips" id="ceCountries">${Object.entries(META.country_policy || {})
+        .filter(([code]) => limits.countries.includes(code)).map(([code, p]) =>
         chk(code, p.name || code, (c.countries || []).includes(code), code)).join('')}</div>
+      <span class="fine" style="display:block;margin:10px 0 12px">Your plan covers these countries. Pick the ones this agent should search.</span>
       <label class="ce-sw"><span class="sw"><input type="checkbox" id="ceRotate" ${c.rotate_cities ? 'checked' : ''} onchange="ceRotateChanged()"><i></i></span>
         Rotate cities — search new cities from these countries every run</label>
       <div class="inp" style="margin-top:12px"><label for="ceLocations">Locations</label>
@@ -1558,26 +1522,25 @@ function paintCampaignEditor() {
         <span class="fine">Comma-separated search phrases, e.g. new website, online booking system.</span></div>`)}
 
     ${sec(4, 'Lead sources', `
-      <p class="fine" style="margin:0 0 10px">Pick the sources this agent searches. None selected means every source that is configured.</p>
-      <div class="chips" id="ceSources">${sources.map(s =>
-        chk(s.key, SOURCE_LABEL[s.key] || s.label, (c.sources || []).includes(s.key), s.available ? '' : 'key missing', !s.available)).join('')}</div>`)}
+      <p class="fine" style="margin:0 0 10px">Where this agent looks is set by your plan.</p>
+      <div class="camp-chips">${(limits.sources || []).length ? limits.sources.map(k =>
+        `<span class="pill sent">${esc(SOURCE_LABEL[k] || k)}</span>`).join('') : '<span class="pill scored">All available sources</span>'}</div>`)}
 
     ${sec(5, 'Quality &amp; volume', `
       <div class="grid2">
-        <div class="inp"><label for="ceScore">Minimum score to draft: <b id="ceScoreV">${c.min_score}</b></label>
-          <input type="range" id="ceScore" min="0" max="100" value="${c.min_score}" oninput="$('#ceScoreV').textContent=this.value">
-          <span class="fine">Leads scoring below this are kept but never drafted.</span></div>
+        <div class="inp"><label for="ceScore">Minimum score to draft: <b id="ceScoreV">${Math.max(c.min_score, limits.min_score)}</b></label>
+          <input type="range" id="ceScore" min="${limits.min_score}" max="100" value="${Math.max(c.min_score, limits.min_score)}" oninput="$('#ceScoreV').textContent=this.value">
+          <span class="fine">Leads scoring below this are kept but never drafted. Your plan's lowest is ${limits.min_score}.</span></div>
         <div class="inp"><label for="ceLeads">Leads per run</label>
-          <input type="number" id="ceLeads" min="1" max="500" value="${c.daily_lead_limit}">
-          <span class="fine">The run stops once it has created this many new leads, which also caps AI cost, since each new lead gets one AI check. It is not the number of emails sent.</span></div>
+          <input type="number" id="ceLeads" min="1" max="${limits.leads_per_run}" value="${Math.min(c.daily_lead_limit, limits.leads_per_run)}">
+          <span class="fine">The run stops once it has created this many new leads. Up to ${limits.leads_per_run} on your plan. It is not the number of emails sent.</span></div>
       </div>`)}
 
     <div class="ce-foot">
-      <button class="btn primary" id="ceSave" onclick="saveCampaign()">${isNew ? 'Create agent' : 'Save changes'}</button>
+      <button class="btn primary" id="ceSave" onclick="saveCampaign()">Save changes</button>
       <button class="btn" onclick="closeDrawer()">Cancel</button>
       <span class="sp"></span>
-      ${isNew ? '' : `<button class="btn" onclick="runCampaign(${c.id})">▶ Run now</button>
-        <button class="btn danger" onclick="deleteCampaign(${c.id})">Delete</button>`}
+      <button class="btn" onclick="runCampaign(${c.id})">▶ Run now</button>
     </div>`;
 
   const d = $('#drawer');
@@ -1593,14 +1556,8 @@ function paintCampaignEditor() {
     b.classList.toggle('on');
     b.setAttribute('aria-pressed', b.classList.contains('on'));
   });
-  $('#ceService').onchange = e => {
-    const head = $('#ceHead');
-    head.querySelector('.ce-ico').innerHTML = svgIcon(svcIcon(e.target.value), 20);
-    ceServiceHint();
-  };
   ceServiceHint();
   ceRotateChanged();
-  if (isNew) $('#ceName').focus();
 }
 
 function ceAllCountries(on) {
@@ -1633,7 +1590,7 @@ function ceRead() {
     rotate_cities: $('#ceRotate').checked,
     locations: listOf('#ceLocations'),
     keywords: listOf('#ceKeywords'),
-    sources: picked('ceSources'),
+    sources: c.sources || [],
     min_score: +$('#ceScore').value,
     daily_lead_limit: +$('#ceLeads').value,
     daily_email_limit: c.daily_email_limit ?? 20,
@@ -1682,10 +1639,8 @@ async function deleteCampaign(id) {
 async function runCampaign(id) {
   try {
     await post(`/api/campaigns/${id}/run`);
-    toast('Campaign started — watch the log');
-    const list = await api('/api/campaigns');
-    const c = list.find(x => x.id === id);
-    if (c && c.last_run) showRun(c.last_run.id);
+    toast('Agent started', 'good');
+    go('workflow');
     setTimeout(() => {
       if (VIEW === 'campaigns') VIEWS.campaigns();
       else if (VIEW === 'workflow') paintWorkflow();
@@ -1703,7 +1658,6 @@ async function stopRun(campaignId) {
       : r.reset ? 'Reset — that run was no longer active and has been closed' : 'Nothing was running', 'good');
     if (VIEW === 'workflow') paintWorkflow();
     else if (VIEW === 'campaigns') VIEWS.campaigns();
-    if ($('#drawer').classList.contains('on') && $('#runLog')) closeDrawer();
   } catch (e) { toast(e.message, 'bad'); }
 }
 
@@ -1712,32 +1666,6 @@ async function dispatchNow() {
     const r = await post('/api/outbox/dispatch');
     toast(`Sent ${r.sent}, failed ${r.failed}, skipped ${r.skipped}`, r.failed ? 'bad' : 'good');
   } catch (e) { toast(e.message, 'bad'); }
-}
-
-async function showRun(runId) {
-  const d = $('#drawer');
-  d.classList.add('on'); $('#drawerBg').classList.add('on');
-  const paint = async () => {
-    let r;
-    try { r = await api('/api/runs/' + runId, { quiet: true }); } catch (e) { return; }
-    d.innerHTML = `
-      <div class="row" style="margin-bottom:14px">
-        <h2 style="margin:0;font-size:18px">Campaign run #${r.id}</h2>
-        <span class="pill ${runPill(r.status)}">${esc(r.status === 'cancelled' ? 'stopped' : r.status)}</span>
-        <span class="sp"></span>
-        ${r.status === 'running' ? `<button class="btn danger" onclick="stopRun(${r.campaign_id})">■ Stop</button>` : ''}
-        <button class="btn ghost" onclick="closeDrawer()">Close</button></div>
-      ${r.error ? `<div class="banner bad">${esc(r.error.slice(0, 600))}</div>` : ''}
-      <div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(105px,1fr))">
-        ${Object.entries(r.stats || {}).map(([k, v]) => `<div class="tile"><div class="k">${esc(RUN_LABEL[k] || k.replace(/_/g, ' '))}</div>
-          <div class="v" style="font-size:21px">${typeof v === 'number' && k.includes('cost') ? '$' + v.toFixed(3) : esc(v)}</div></div>`).join('')}
-      </div>
-      <div class="card"><h3>Log</h3><div class="log" id="runLog">${(r.log || []).map(esc).join('\n') || 'No output yet…'}</div></div>`;
-    const lg = $('#runLog'); if (lg) lg.scrollTop = lg.scrollHeight;
-    if (r.status === 'running' && d.classList.contains('on')) setTimeout(paint, 2000);
-  };
-  d.innerHTML = '<div class="empty">Loading…</div>';
-  paint();
 }
 
 /* -------------------------------------------------------------- settings */

@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import (
-    AIAnalysis, AccountSettings, Campaign, CampaignRun, EmailMessage, Lead, Mailbox, Suppression, User,
-    WhatsAppMessage,
+    AIAnalysis, AccountSettings, Campaign, CampaignRun, EmailMessage, Lead, Mailbox, Payment,
+    Session as LoginSession, Subscription, Suppression, User, WhatsAppMessage,
 )
 from app.services import auth, billing, tenant
 
@@ -125,3 +125,41 @@ def transfer_admin_workspace(db: Session, *, email: str, password: str = "",
     reschedule()
     return {"user_id": target, "email": user.email, "created": created, "moved": before,
             "bots": sorted(bots)}
+
+
+def delete_account(db: Session, user: User) -> dict:
+    """Remove a customer and everything that belongs to them, for good.
+
+    Their agents, runs, leads, drafts and sent mail, WhatsApp queue, mailboxes,
+    unsubscribe list, mail settings, plans, payments and sign-ins all go.
+    Companies, contacts and evidence are shared facts about businesses, not the
+    customer's data, so they stay for everyone else.
+
+    Rows are deleted child first so it works the same on SQLite and Postgres,
+    whatever the database does with cascades.
+    """
+    uid = user.id
+    if user.role != "customer" or uid == tenant.admin_id(db):
+        raise ValueError("Only customer accounts can be deleted.")
+    gone = counts(db, uid)
+    own = lambda m: m.owner_id == uid  # noqa: E731
+
+    lead_ids = select(Lead.id).where(Lead.owner_id == uid)
+    db.execute(delete(AIAnalysis).where(AIAnalysis.lead_id.in_(lead_ids)))
+    for model in (EmailMessage, WhatsAppMessage):
+        db.execute(delete(model).where(model.lead_id.in_(lead_ids)))
+    for model in (EmailMessage, WhatsAppMessage):  # anything left that carries the owner id
+        db.execute(delete(model).where(own(model)))
+    db.execute(delete(Lead).where(own(Lead)))
+    db.execute(delete(CampaignRun).where(own(CampaignRun)))
+    db.execute(delete(Campaign).where(own(Campaign)))
+    db.execute(delete(Mailbox).where(own(Mailbox)))
+    db.execute(delete(Suppression).where(own(Suppression)))
+    db.execute(delete(AccountSettings).where(AccountSettings.owner_id == uid))
+    db.execute(delete(Subscription).where(Subscription.user_id == uid))
+    db.execute(delete(Payment).where(Payment.user_id == uid))
+    db.execute(delete(LoginSession).where(LoginSession.user_id == uid))
+    db.delete(user)
+    db.commit()
+    auth._forget_sessions()  # the 60 s session cache must not keep them signed in
+    return gone

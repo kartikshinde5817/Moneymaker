@@ -150,6 +150,19 @@ class Bot(Base):
     price_inr_year: Mapped[int] = mapped_column(Integer, default=19999)
     price_usd_month: Mapped[int] = mapped_column(Integer, default=29)
     price_usd_year: Mapped[int] = mapped_column(Integer, default=290)
+    # What the agent does. Set by the admin, shown to customers, and enforced
+    # on every customer's agent for this bot. Null = not set yet; the app then
+    # falls back to the built-in defaults (see services/billing.py).
+    countries: Mapped[list | None] = mapped_column(JSON)
+    sources: Mapped[list | None] = mapped_column(JSON)
+    schedule_days: Mapped[str | None] = mapped_column(String(16))
+    schedule_time: Mapped[str | None] = mapped_column(String(5))
+    leads_per_run: Mapped[int | None] = mapped_column(Integer)
+    min_score: Mapped[int | None] = mapped_column(Integer)
+    # Plan lengths in days, and the free trial in hours (null = platform default).
+    trial_hours: Mapped[int | None] = mapped_column(Integer)
+    month_days: Mapped[int | None] = mapped_column(Integer)
+    year_days: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[dt.datetime] = mapped_column(TS, default=utcnow)
 
 

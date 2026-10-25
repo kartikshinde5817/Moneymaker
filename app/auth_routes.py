@@ -67,7 +67,7 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(401, "Incorrect email or password")
     if user.status != "active":
-        raise HTTPException(403, "This account is suspended. Please contact support.")
+        raise HTTPException(403, "This account has been blocked. Please contact support.")
 
     if user.role == "admin":
         if user.totp_confirmed:
@@ -242,7 +242,7 @@ class SessionGuardMiddleware(BaseHTTPMiddleware):
             return RedirectResponse("/login")
         if ident.get("status") != "active":
             if path.startswith("/api/"):
-                return JSONResponse({"detail": "Your account is suspended."}, status_code=403)
+                return JSONResponse({"detail": "Your account has been blocked."}, status_code=403)
             return RedirectResponse("/login?suspended=1")
         if path.startswith("/api/admin") and ident.get("role") != "admin":
             return JSONResponse({"detail": "Only the platform admin can do this"}, status_code=403)

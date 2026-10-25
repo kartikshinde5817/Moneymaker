@@ -171,6 +171,7 @@ section{padding:84px 0}
 }
 @media (prefers-reduced-motion:reduce){.cy-orbit,.cy-sweep{display:none}}
 
+.bot .where{margin:12px 0 0;font-size:12.5px;color:var(--muted);line-height:1.5}.bot .where b{color:var(--ink)}
 .features{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 @media (max-width:900px){.features{grid-template-columns:1fr}}
 .feat{background:#fff;padding:26px}
@@ -357,6 +358,7 @@ function renderBots() {
     <div class="bot reveal"><span class="ico">${icon(b.key)}</span>
       <h3>${esc(b.name)}</h3><p>${esc(b.tagline)}</p>
       <ul>${(b.features || []).map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+      <p class="where"><b>Finds leads in</b> ${esc(((b.agent || {}).country_names || []).join(', '))}</p>
       <div class="from">from <b>${money(b.prices[state.currency].month, state.currency)}</b>/month</div>
     </div>`).join('');
   observe();

@@ -194,7 +194,7 @@ $('#confirmCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#
 
 // --- which page ---
 (async () => {
-  if (params.get('suspended')) { const i = $('#infoLogin'); i.textContent = 'This account is suspended. Please contact support.'; i.style.display = 'block'; i.style.background = '#FEF2F2'; i.style.color = '#9B1C1C'; i.style.borderColor = '#FBD5D5'; }
+  if (params.get('suspended')) { const i = $('#infoLogin'); i.textContent = 'This account has been blocked. Please contact support.'; i.style.display = 'block'; i.style.background = '#FEF2F2'; i.style.color = '#9B1C1C'; i.style.borderColor = '#FBD5D5'; }
   const signup = location.pathname.startsWith('/signup');
   show(signup ? 'stepSignup' : 'stepLogin');
   (signup ? $('#sName') : $('#lEmail')).focus();

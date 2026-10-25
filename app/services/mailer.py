@@ -366,6 +366,14 @@ def send_message(db: Session, message: EmailMessage) -> tuple[bool, str]:
     if not lead or not company:
         return False, "lead or company missing"
 
+    # A blocked account keeps its data but sends nothing; the mail stays queued
+    # and goes out if the account is unblocked.
+    from app.models import User
+    holder = db.get(User, message.owner_id or lead.owner_id) if (message.owner_id or lead.owner_id) else None
+    if holder is not None and holder.status != "active":
+        message.status = "queued"
+        return False, "This account is blocked, so nothing is sent."
+
     gate = check_can_send(db, lead, company, contact, exclude_message_id=message.id)
     if not gate.ok:
         message.status = "rejected"

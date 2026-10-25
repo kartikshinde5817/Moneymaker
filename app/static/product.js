@@ -95,7 +95,8 @@ async function loadRazorpay() {
 }
 
 async function startTrial(key) {
-  if (!confirm(`Start your free ${META.trial.hours}-hour trial of ${botName(key)}?\n\nYou get one free trial per account.`)) return;
+  const hrs = ((META.bots || []).find(x => x.key === key) || {}).plan;
+  if (!confirm(`Start your free ${hrs ? hrs.trial_hours : META.trial.hours}-hour trial of ${botName(key)}?\n\nYou get one free trial per account.`)) return;
   try {
     await post('/api/billing/trial', { bot: key });
     toast(`${botName(key)} unlocked — your first agent is ready`, 'good');
@@ -160,6 +161,21 @@ VIEWS.bots = async function () {
   paint();
 };
 
+// Everything an agent for this bot does, as the admin has set it. Read-only here.
+function botFacts(bot) {
+  const a = bot.agent || {}, pl = bot.plan || {}, names = META.country_policy || {};
+  const fmtHours = h => h % 24 === 0 ? `${h / 24} day${h === 24 ? '' : 's'}` : `${h} hours`;
+  const rows = [
+    ['Countries', (a.countries || []).map(c => (names[c] || {}).name || c).join(', ') || '—'],
+    ['Runs', `${DAYS_LABEL[a.schedule_days] || a.schedule_days || '—'} at ${a.schedule_time || '—'}`],
+    ['Leads per run', `up to ${a.leads_per_run || '—'}`],
+    ['Searches', (a.sources || []).length ? a.sources.map(k => SOURCE_LABEL[k] || k).join(', ') : 'every available source'],
+    ['Free trial', pl.trial_hours ? fmtHours(pl.trial_hours) : '—'],
+    ['Plan length', `${pl.month_days || 30} days monthly · ${pl.year_days || 365} days yearly`],
+  ];
+  return `<dl class="facts">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
+}
+
 function storeCard(bot, b, cur, period, i, pending) {
   const a = b.access[bot.key];
   const price = bot.prices[cur][period];
@@ -186,6 +202,7 @@ function storeCard(bot, b, cur, period, i, pending) {
     </div>
     <p>${esc(bot.tagline)}</p>
     <ul>${(bot.features || []).map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+    ${botFacts(bot)}
     <div class="sbot-foot">
       <div class="price"><b>${fmtMoney(price, cur)}</b><span>/${period === 'year' ? 'year' : 'month'}</span>
         ${monthly ? `<small>≈ ${fmtMoney(monthly, cur)}/month</small>` : ''}</div>
@@ -525,14 +542,14 @@ VIEWS.customers = async function () {
           : '<span class="muted">none</span>'}</td>
         <td class="mono">${c.leads}</td><td class="mono">${c.emails_sent}</td>
         <td class="mono">${moneyMap(c.paid)}</td><td>${fmtDay(c.created_at)}</td>
-        <td><span class="pill ${c.status === 'active' ? 'sent' : 'rejected'}">${esc(c.status)}</span></td></tr>`).join('')}
+        <td><span class="pill ${c.status === 'active' ? 'sent' : 'rejected'}">${c.status === 'active' ? 'active' : 'blocked'}</span></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty"><h3>No customers found</h3><p>New sign-ups appear here.</p></div>';
   };
   $('#view').innerHTML = `
     <div class="head"><div><h2>Customers</h2><p>Every account, what it has access to, and how it is using the bots.</p></div></div>
     <div class="filters">
       <input type="search" id="custQ" placeholder="Search name, email or company">
-      <select id="custS"><option value="">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option></select>
+      <select id="custS"><option value="">All statuses</option><option value="active">Active</option><option value="suspended">Blocked</option></select>
     </div>
     <div id="custList"><div class="empty">Loading…</div></div>`;
   let t;
@@ -558,7 +575,7 @@ async function openCustomer(id) {
       <div><div class="muted">Joined</div><b>${fmtDay(c.created_at)}</b></div>
       <div><div class="muted">Last sign-in</div><b>${c.last_login_at ? fmtTime(c.last_login_at) : '—'}</b></div>
       <div><div class="muted">Free trial</div><b>${c.trial_bot ? `${esc(botName(c.trial_bot))} · ${fmtDay(c.trial_started_at)}` : 'not used'}</b></div>
-      <div><div class="muted">Status</div><span class="pill ${c.status === 'active' ? 'sent' : 'rejected'}">${esc(c.status)}</span></div>
+      <div><div class="muted">Status</div><span class="pill ${c.status === 'active' ? 'sent' : 'rejected'}">${c.status === 'active' ? 'active' : 'blocked'}</span></div>
     </div>
     <div class="camp-stats" style="margin-top:14px">
       <div><b>${c.usage.campaigns}</b><span>agents</span></div><div><b>${c.usage.runs}</b><span>runs</span></div>
@@ -579,11 +596,17 @@ async function openCustomer(id) {
 
     <div class="ce-sec"><h4>Account</h4>
       <div class="row">
-        ${c.status === 'active' ? `<button class="btn danger" onclick="setCustomerStatus(${c.id},'suspended')">Suspend account</button>`
-          : `<button class="btn good" onclick="setCustomerStatus(${c.id},'active')">Reactivate account</button>`}
+        ${c.status === 'active' ? `<button class="btn danger" onclick="setCustomerStatus(${c.id},'suspended')">Block account</button>`
+          : `<button class="btn good" onclick="setCustomerStatus(${c.id},'active')">Unblock account</button>`}
         <button class="btn" onclick="resetCustomerPassword(${c.id})">Set a new password</button>
       </div>
-      <p class="fine" style="margin-top:10px;font-size:12px">Suspending signs them out everywhere at once and stops their scheduled agents.</p></div>`;
+      <p class="fine" style="margin-top:10px;font-size:12px">Blocking signs them out everywhere and stops their agents and sending.
+        Nothing is deleted: their leads, emails and settings are kept, and everything works again when you unblock.</p></div>
+
+    <div class="ce-sec dz"><h4>Delete account</h4>
+      <p class="fine" style="margin:0 0 10px;font-size:12px">Permanently removes this customer and all their details: agents, runs, leads, emails,
+        mail settings, plans and payment records. This cannot be undone. To keep the data, block the account instead.</p>
+      <button class="btn danger" onclick="deleteCustomer(${c.id},'${esc(c.email)}')">Delete this account…</button></div>`;
 }
 
 async function grantBot(id, key) {
@@ -598,9 +621,21 @@ async function revokeBot(id, key) {
   catch (e) { toast(e.message, 'bad'); }
 }
 async function setCustomerStatus(id, status) {
-  if (status === 'suspended' && !confirm('Suspend this account? They are signed out immediately.')) return;
-  try { await patch(`/api/admin/customers/${id}`, { status }); toast(status === 'active' ? 'Account reactivated' : 'Account suspended', 'good'); openCustomer(id); if (VIEW === 'customers') VIEWS.customers(); }
+  if (status === 'suspended' && !confirm('Block this account?\n\nThey are signed out immediately and cannot sign in. Their data is kept.')) return;
+  try { await patch(`/api/admin/customers/${id}`, { status }); toast(status === 'active' ? 'Account unblocked' : 'Account blocked', 'good'); openCustomer(id); if (VIEW === 'customers') VIEWS.customers(); }
   catch (e) { toast(e.message, 'bad'); }
+}
+async function deleteCustomer(id, email) {
+  const typed = prompt(`This permanently deletes ${email} and ALL their data.\n\nType their email address to confirm:`);
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== email.toLowerCase()) { toast('That email does not match, so nothing was deleted', 'bad'); return; }
+  try {
+    const r = await api(`/api/admin/customers/${id}`, { method: 'DELETE' });
+    const d = r.deleted || {};
+    toast(`Deleted ${email}: ${d.campaigns || 0} agents, ${d.leads || 0} leads, ${d.email_messages || 0} emails`, 'good');
+    closeDrawer();
+    if (VIEW === 'customers') VIEWS.customers(); else if (VIEW === 'admin') VIEWS.admin();
+  } catch (e) { toast(e.message, 'bad'); }
 }
 async function resetCustomerPassword(id) {
   const pw = prompt('New password for this customer (at least 8 characters). Share it with them securely.');
@@ -615,7 +650,7 @@ VIEWS.adminbots = async function () {
   if (!isAdmin()) return go('workflow');
   const bots = await api('/api/admin/bots');
   $('#view').innerHTML = `
-    <div class="head"><div><h2>Bots & pricing</h2><p>What customers can buy and what it costs. Changes go live on the landing page and in checkout immediately; existing plans keep the price they were bought at.</p></div>
+    <div class="head"><div><h2>Bots & pricing</h2><p>Everything about a bot: what it costs, which countries and sources its agent uses, when it runs and how long plans last. Customers see all of this but cannot change it. Changes reach every customer's agent straight away; existing plans keep the price they were bought at.</p></div>
       <button class="btn primary" onclick="openServiceForm(null,'list')">${svgIcon(NODE_ICONS.plus)} New bot</button></div>
     <div class="store">${bots.map((b, i) => `
       <div class="sbot" style="--i:${i}" data-key="${esc(b.key)}">
@@ -633,9 +668,35 @@ VIEWS.adminbots = async function () {
           <div class="inp"><label>$ / month</label><input type="number" min="0" class="p_usd_month" value="${b.prices.USD.month}"></div>
           <div class="inp"><label>$ / year</label><input type="number" min="0" class="p_usd_year" value="${b.prices.USD.year}"></div>
         </div>
+        <div class="bsec"><h4>Agent — what it does for every customer</h4>
+          <div class="inp"><label>Countries <span class="opt">customers can only pick from these</span></label>
+            <div class="chips bCountries">${Object.entries(META.country_policy || {}).map(([code, p]) =>
+              chk(code, p.name || code, (b.agent.countries || []).includes(code), code)).join('')}</div></div>
+          <div class="inp" style="margin-top:12px"><label>Lead sources <span class="opt">none selected = every available source</span></label>
+            <div class="chips bSources">${(META.sources || []).map(x =>
+              chk(x.key, SOURCE_LABEL[x.key] || x.label, (b.agent.sources || []).includes(x.key), x.available ? '' : 'key missing', !x.available)).join('')}</div></div>
+          <div class="pgrid" style="margin-top:12px">
+            <div class="inp"><label>Runs on</label><select class="a_days">${Object.entries(DAYS_LABEL).map(([v, l]) =>
+              `<option value="${v}" ${v === b.agent.schedule_days ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+            <div class="inp"><label>Start time</label><input type="time" class="a_time" value="${esc(b.agent.schedule_time)}"></div>
+            <div class="inp"><label>Leads per run <span class="opt">most</span></label><input type="number" min="1" max="500" class="a_leads" value="${b.agent.leads_per_run}"></div>
+            <div class="inp"><label>Min score <span class="opt">lowest</span></label><input type="number" min="0" max="100" class="a_score" value="${b.agent.min_score}"></div>
+          </div></div>
+        <div class="bsec"><h4>Plan length</h4>
+          <div class="pgrid">
+            <div class="inp"><label>Free trial <span class="opt">hours</span></label><input type="number" min="1" class="t_hours" value="${b.plan.trial_hours_custom || ''}" placeholder="${b.plan.trial_hours}"></div>
+            <div class="inp"><label>Monthly plan <span class="opt">days</span></label><input type="number" min="1" max="366" class="t_month" value="${b.plan.month_days}"></div>
+            <div class="inp"><label>Yearly plan <span class="opt">days</span></label><input type="number" min="1" max="3660" class="t_year" value="${b.plan.year_days}"></div>
+          </div><span class="fine">Leave the trial empty to use the platform default. Applies to new trials and new payments.</span></div>
         <div class="sbot-foot"><span class="muted" style="font-size:12.5px">${b.subscribers} subscribed · ${moneyMap(b.revenue)} earned</span>
           <button class="btn primary sm" onclick="saveBot('${b.key}')">Save</button></div>
       </div>`).join('')}</div>`;
+  $('#view').querySelectorAll('.chips').forEach(box => box.onclick = e => {
+    const x = e.target.closest('.chk');
+    if (!x) return;
+    x.classList.toggle('on');
+    x.setAttribute('aria-pressed', x.classList.contains('on'));
+  });
 };
 
 async function saveBot(key) {
@@ -646,12 +707,19 @@ async function saveBot(key) {
     active: card.querySelector('.bActive').checked, sort_order: 100,
     price_inr_month: +v('.p_inr_month'), price_inr_year: +v('.p_inr_year'),
     price_usd_month: +v('.p_usd_month'), price_usd_year: +v('.p_usd_year'),
+    countries: [...card.querySelectorAll('.bCountries .chk.on')].map(x => x.dataset.v),
+    sources: [...card.querySelectorAll('.bSources .chk.on')].map(x => x.dataset.v),
+    schedule_days: v('.a_days'), schedule_time: v('.a_time') || '09:00',
+    leads_per_run: +v('.a_leads') || 25, min_score: +v('.a_score'),
+    trial_hours: v('.t_hours') ? +v('.t_hours') : null,
+    month_days: +v('.t_month') || 30, year_days: +v('.t_year') || 365,
   };
+  if (!body.countries.length) { toast('Pick at least one country for this bot', 'bad'); return; }
   const orig = (META.bots || []).find(b => b.key === key);
   if (orig) { body.description = orig.description || ''; body.sort_order = orig.sort_order || 100; }
   try {
-    await api(`/api/admin/bots/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    toast(`${body.name} saved`, 'good'); await refreshMeta();
+    const r = await api(`/api/admin/bots/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    toast(`${body.name} saved${r.agents_updated ? ` — ${r.agents_updated} customer agent${r.agents_updated === 1 ? '' : 's'} updated` : ''}`, 'good'); await refreshMeta();
   } catch (e) { toast(e.message, 'bad'); }
 }
 

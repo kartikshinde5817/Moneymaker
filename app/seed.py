@@ -118,9 +118,6 @@ DEFAULT_CAMPAIGNS = [
     },
 ]
 
-# A customer's own agents start smaller than the platform owner's.
-CUSTOMER_LEAD_LIMIT = 25
-
 # Which free key to get first, and what it unlocks. Surfaced on the Settings
 # page so the highest-impact one is obvious.
 FREE_KEY_PRIORITY = [
@@ -144,33 +141,52 @@ FREE_KEY_PRIORITY = [
 ]
 
 
-def _campaign_from_spec(spec: dict, owner_id: int, **over) -> Campaign:
-    return Campaign(
-        owner_id=owner_id, name=spec["name"], service_category=spec["service_category"],
-        sources=list(spec["sources"]), countries=list(spec["countries"]),
-        locations=[], rotate_cities=True, city_history={},
-        schedule_time=spec["schedule_time"], schedule_days="mon-fri",
-        min_score=spec["min_score"], keywords=[], industries=[], enabled=True,
-        approval_mode="manual",
-        daily_lead_limit=over.get("daily_lead_limit", spec["daily_lead_limit"]),
-        daily_email_limit=over.get("daily_lead_limit", spec["daily_lead_limit"]),
-    )
+def apply_bot_limits(campaign: Campaign, bot) -> bool:
+    """Hold a customer's agent inside what its bot allows.
+
+    The admin sets, per bot, the countries it may search, the sources it uses,
+    the days it runs, the most leads per run and the lowest score it may
+    draft at. Returns True when something had to change.
+    """
+    from app.services.billing import fill_agent_defaults
+
+    fill_agent_defaults(bot)
+    before = (list(campaign.countries or []), list(campaign.sources or []),
+              campaign.schedule_days, campaign.daily_lead_limit, campaign.min_score)
+    allowed = list(bot.countries)
+    campaign.countries = [c for c in (campaign.countries or []) if c in allowed] or allowed
+    campaign.sources = list(bot.sources or [])
+    campaign.schedule_days = bot.schedule_days
+    campaign.daily_lead_limit = max(1, min(campaign.daily_lead_limit or bot.leads_per_run, bot.leads_per_run))
+    campaign.min_score = max(campaign.min_score if campaign.min_score is not None else 0, bot.min_score)
+    return before != (list(campaign.countries), list(campaign.sources), campaign.schedule_days,
+                      campaign.daily_lead_limit, campaign.min_score)
 
 
 def starter_campaign(db: Session, owner_id: int, bot_key: str) -> Campaign | None:
-    """Give a customer a ready-to-run agent the first time they unlock a bot."""
+    """Give a customer their ready-made agent the first time they unlock a bot.
+
+    There is exactly one agent per bot and customers cannot create more: what
+    it searches is set on the bot by the admin.
+    """
+    from app.services import billing, catalog
+
     has = db.execute(select(Campaign).where(
         Campaign.owner_id == owner_id, Campaign.service_category == bot_key)).scalars().first()
     if has:
         return None
-    spec = next((s for s in DEFAULT_CAMPAIGNS if s["service_category"] == bot_key), None)
-    if spec is None:
-        from app.services import catalog
-        spec = {"name": catalog.label_for(bot_key), "service_category": bot_key,
-                "sources": [], "countries": ["GB", "US"], "schedule_time": "09:00",
-                "daily_lead_limit": CUSTOMER_LEAD_LIMIT, "min_score": 45}
-    campaign = _campaign_from_spec(spec, owner_id, daily_lead_limit=min(
-        spec["daily_lead_limit"], CUSTOMER_LEAD_LIMIT))
+    bot = db.execute(select(billing.Bot).where(billing.Bot.key == bot_key)).scalar_one_or_none()
+    if bot is None:
+        return None
+    billing.fill_agent_defaults(bot)
+    campaign = Campaign(
+        owner_id=owner_id, name=catalog.label_for(bot_key), service_category=bot_key,
+        sources=list(bot.sources or []), countries=list(bot.countries), locations=[],
+        rotate_cities=True, city_history={}, schedule_time=bot.schedule_time,
+        schedule_days=bot.schedule_days, min_score=bot.min_score, keywords=[], industries=[],
+        enabled=True, approval_mode="manual",
+        daily_lead_limit=bot.leads_per_run, daily_email_limit=bot.leads_per_run,
+    )
     db.add(campaign)
     db.flush()
     return campaign

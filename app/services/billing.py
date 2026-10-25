@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 
 API = "https://api.razorpay.com/v1"
 PERIOD_DAYS = {"month": 30, "year": 365}
+DEFAULT_COUNTRIES = ["GB", "US"]
+DEFAULT_LEADS_PER_RUN = 25
+DEFAULT_MIN_SCORE = 45
 CURRENCIES = ("INR", "USD")
 
 DEFAULT_BOTS = [
@@ -86,12 +89,52 @@ DEFAULT_BOTS = [
 # --- catalog ----------------------------------------------------------------------
 
 def seed_bots(db: Session) -> None:
-    """Make sure every built-in bot exists. Prices are never overwritten."""
-    have = set(db.execute(select(Bot.key)).scalars())
+    """Make sure every built-in bot exists and has its agent settings.
+
+    Prices and anything the admin has edited are never overwritten: only
+    settings that are still unset are filled in, from the built-in defaults.
+    """
+    from app.seed import DEFAULT_CAMPAIGNS
+
+    have = {b.key: b for b in db.execute(select(Bot)).scalars()}
     for spec in DEFAULT_BOTS:
         if spec["key"] not in have:
-            db.add(Bot(**spec))
+            have[spec["key"]] = Bot(**spec)
+            db.add(have[spec["key"]])
+    agents = {c["service_category"]: c for c in DEFAULT_CAMPAIGNS}
+    for key, bot in have.items():
+        fill_agent_defaults(bot, agents.get(key))
     db.flush()
+
+
+def fill_agent_defaults(bot: Bot, spec: dict | None = None) -> None:
+    """Set whatever agent settings the bot does not have yet."""
+    spec = spec or {}
+    if not bot.countries:
+        bot.countries = list(spec.get("countries") or DEFAULT_COUNTRIES)
+    if bot.sources is None:
+        bot.sources = list(spec.get("sources") or [])
+    if not bot.schedule_days:
+        bot.schedule_days = "mon-fri"
+    if not bot.schedule_time:
+        bot.schedule_time = spec.get("schedule_time") or "09:00"
+    if not bot.leads_per_run:
+        bot.leads_per_run = min(int(spec.get("daily_lead_limit") or DEFAULT_LEADS_PER_RUN), 100)
+    if bot.min_score is None:
+        bot.min_score = int(spec.get("min_score") or DEFAULT_MIN_SCORE)
+    if not bot.month_days:
+        bot.month_days = PERIOD_DAYS["month"]
+    if not bot.year_days:
+        bot.year_days = PERIOD_DAYS["year"]
+
+
+def trial_hours_for(bot: Bot) -> int:
+    return int(bot.trial_hours or settings.trial_hours)
+
+
+def period_days(bot: Bot | None, period: str) -> int:
+    custom = getattr(bot, f"{period}_days", None) if bot is not None else None
+    return int(custom or PERIOD_DAYS[period])
 
 
 def ensure_bot_for_service(db: Session, key: str, name: str, tagline: str = "") -> Bot:
@@ -99,6 +142,7 @@ def ensure_bot_for_service(db: Session, key: str, name: str, tagline: str = "") 
     if bot is None:
         bot = Bot(key=key, name=name if name.lower().endswith("bot") else f"{name} Bot",
                   tagline=tagline[:200], description=tagline, features=[], sort_order=200)
+        fill_agent_defaults(bot)
         db.add(bot)
         db.flush()
     return bot
@@ -110,10 +154,25 @@ def price(bot: Bot, currency: str, period: str) -> int:
 
 
 def bot_json(bot: Bot) -> dict:
+    from app.services.compliance import COUNTRY_NAMES
+
     return {
         "key": bot.key, "name": bot.name, "tagline": bot.tagline,
         "description": bot.description, "features": bot.features or [],
         "active": bot.active, "sort_order": bot.sort_order,
+        # Shown to customers as "what's included"; only the admin can change it.
+        "agent": {
+            "countries": list(bot.countries or DEFAULT_COUNTRIES),
+            "country_names": [COUNTRY_NAMES.get(c, c) for c in (bot.countries or DEFAULT_COUNTRIES)],
+            "sources": list(bot.sources or []),
+            "schedule_days": bot.schedule_days or "mon-fri",
+            "schedule_time": bot.schedule_time or "09:00",
+            "leads_per_run": int(bot.leads_per_run or DEFAULT_LEADS_PER_RUN),
+            "min_score": int(bot.min_score if bot.min_score is not None else DEFAULT_MIN_SCORE),
+        },
+        "plan": {"trial_hours": trial_hours_for(bot),
+                 "month_days": period_days(bot, "month"), "year_days": period_days(bot, "year"),
+                 "trial_hours_custom": bot.trial_hours},
         "prices": {
             "INR": {"month": bot.price_inr_month, "year": bot.price_inr_year},
             "USD": {"month": bot.price_usd_month, "year": bot.price_usd_year},
@@ -180,8 +239,8 @@ def start_trial(db: Session, user: User, bot_key: str) -> Subscription:
     now = utcnow()
     user.trial_bot, user.trial_started_at = bot_key, now
     sub = Subscription(user_id=user.id, bot_key=bot_key, kind="trial", period="day",
-                       starts_at=now, expires_at=now + dt.timedelta(hours=settings.trial_hours),
-                       note=f"{settings.trial_hours}-hour free trial")
+                       starts_at=now, expires_at=now + dt.timedelta(hours=trial_hours_for(bot)),
+                       note=f"{trial_hours_for(bot)}-hour free trial")
     db.add(sub)
     db.flush()
     return sub
@@ -289,9 +348,10 @@ def fulfil(db: Session, order_id: str, provider_payment_id: str,
     now = utcnow()
     payment.status, payment.provider_payment_id, payment.paid_at = "paid", provider_payment_id, now
     start = _current_end(db, payment.user_id, payment.bot_key)
+    bot = db.execute(select(Bot).where(Bot.key == payment.bot_key)).scalar_one_or_none()
     sub = Subscription(user_id=payment.user_id, bot_key=payment.bot_key, kind="paid",
                        period=payment.period, currency=payment.currency, amount=payment.amount,
-                       starts_at=start, expires_at=start + dt.timedelta(days=PERIOD_DAYS[payment.period]),
+                       starts_at=start, expires_at=start + dt.timedelta(days=period_days(bot, payment.period)),
                        payment_id=payment.id)
     db.add(sub)
     db.flush()

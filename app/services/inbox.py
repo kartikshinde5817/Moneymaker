@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import (
-    Company, Contact, EmailEvent, EmailMessage, Lead, utcnow,
+    Company, Contact, EmailEvent, EmailMessage, Lead, User, utcnow,
 )
 from app.services import notify
 from app.services.compliance import suppress
@@ -218,7 +218,8 @@ def poll_all(db: Session) -> dict:
     from app.services.tenant import config_for
 
     owners = db.execute(
-        select(EmailMessage.owner_id).where(EmailMessage.status == "sent").distinct()
+        select(EmailMessage.owner_id).join(User, User.id == EmailMessage.owner_id)
+        .where(EmailMessage.status == "sent", User.status == "active").distinct()
     ).scalars().all()
     total = {"checked": 0, "replies": 0, "bounces": 0, "unsubscribes": 0,
              "unmatched": 0, "alerts": 0}

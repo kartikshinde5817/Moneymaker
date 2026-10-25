@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db, session_scope
 from app.models import (
-    AIAnalysis, Campaign, CampaignRun, Company, Contact, EmailEvent,
+    AIAnalysis, Bot, Campaign, CampaignRun, Company, Contact, EmailEvent,
     EmailMessage, Lead, Mailbox, SearchQuery, Signal, Source, Suppression,
     Service, WebsiteAudit, WhatsAppMessage, as_aware, utcnow,
 )
@@ -52,7 +52,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> Me:
     ident = getattr(request.state, "user", None)
     if ident:
         if ident.get("status") != "active":
-            raise HTTPException(403, "Your account is suspended. Please contact support.")
+            raise HTTPException(403, "Your account has been blocked. Please contact support.")
         return Me(ident["id"], ident["role"])
     if not auth.login_required():
         # Local use with no ADMIN_PASSWORD: the one person at the keyboard is the admin.
@@ -95,9 +95,11 @@ def meta(me: Me = Depends(current_user), db: Session = Depends(get_db)):
 
     cfg = tenant.config_for(db, me.id)
     user = db.get(User, me.id)
-    trial_end = None
+    trial_end, trial_hrs = None, settings.trial_hours
     if user and user.trial_started_at:
-        trial_end = (as_aware(user.trial_started_at) + dt.timedelta(hours=settings.trial_hours)).isoformat()
+        used = db.execute(select(Bot).where(Bot.key == user.trial_bot)).scalar_one_or_none()
+        trial_hrs = billing.trial_hours_for(used) if used else settings.trial_hours
+        trial_end = (as_aware(user.trial_started_at) + dt.timedelta(hours=trial_hrs)).isoformat()
     bots = billing.catalog(db)
     return {
         "app": settings.platform_name,
@@ -108,7 +110,7 @@ def meta(me: Me = Depends(current_user), db: Session = Depends(get_db)):
         "access": billing.access_map(db, me.id),
         "trial": {"used": bool(user and user.trial_started_at),
                   "bot": user.trial_bot if user else None, "ends_at": trial_end,
-                  "hours": settings.trial_hours},
+                  "hours": trial_hrs},
         "bots": [billing.bot_json(b) for b in bots],
         "razorpay_ready": billing.razorpay_ready(),
         "ai_ready": ai.available(),
@@ -464,37 +466,29 @@ def list_campaigns(me: Me = Depends(current_user), db: Session = Depends(get_db)
     return out
 
 
-# Customers' agents stay within a sensible size: every run uses shared search
-# quotas, so one account must not be able to exhaust them for everyone.
-CUSTOMER_MAX_LEADS_PER_RUN = 100
-
-
-def _limit_for(me: Me, payload: "CampaignIn") -> None:
-    if not me.is_admin and payload.daily_lead_limit > CUSTOMER_MAX_LEADS_PER_RUN:
-        raise HTTPException(400, f"Leads per run can be at most {CUSTOMER_MAX_LEADS_PER_RUN}.")
-
-
 @router.post("/campaigns")
-def create_campaign(payload: CampaignIn, me: Me = Depends(current_user), db: Session = Depends(get_db)):
-    _require_bot(db, me, payload.service_category)
-    _limit_for(me, payload)
-    c = Campaign(owner_id=me.id, **payload.model_dump())
-    db.add(c)
-    db.commit()
-    from app.scheduler import reschedule
-    reschedule()
-    return {"id": c.id}
+def create_campaign(me: Me = Depends(current_user)):
+    # One ready-made agent comes with each bot (see seed.starter_campaign).
+    # Customers don't build their own: what an agent searches is set per bot.
+    raise HTTPException(403, "Agents come with your bots, so you can't create new ones. "
+                             "Unlock another bot under My bots to get its agent.")
 
 
 @router.put("/campaigns/{campaign_id}")
 def update_campaign(campaign_id: int, payload: CampaignIn, me: Me = Depends(current_user),
                     db: Session = Depends(get_db)):
+    from app.seed import apply_bot_limits
+
     c = _owned(db, Campaign, campaign_id, me, "campaign")
     if payload.service_category != c.service_category:
-        _require_bot(db, me, payload.service_category)
-    _limit_for(me, payload)
-    for k, v in payload.model_dump().items():
+        raise HTTPException(400, "An agent stays with the bot it came with.")
+    bot = db.execute(select(Bot).where(Bot.key == c.service_category)).scalar_one_or_none()
+    changes = payload.model_dump()
+    changes.pop("service_category")
+    for k, v in changes.items():
         setattr(c, k, v)
+    if bot is not None:  # the bot's limits win over whatever was submitted
+        apply_bot_limits(c, bot)
     db.commit()
     from app.scheduler import reschedule
     reschedule()
@@ -504,6 +498,9 @@ def update_campaign(campaign_id: int, payload: CampaignIn, me: Me = Depends(curr
 @router.delete("/campaigns/{campaign_id}")
 def delete_campaign(campaign_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
     c = _owned(db, Campaign, campaign_id, me, "campaign")
+    if not me.is_admin:
+        raise HTTPException(403, "Your agent comes with the bot and can't be deleted. "
+                                 "You can switch it off instead.")
     # Leads outlive the campaign that found them: detach rather than lose them.
     # Lead.campaign_id has no ON DELETE rule, so Postgres refuses the delete
     # while any lead still points here.
@@ -614,7 +611,9 @@ def workflow_state(me: Me = Depends(current_user), db: Session = Depends(get_db)
         }
 
     state = run.stage_state or {}
-    nodes = state.get("nodes") or idle_nodes
+    # Customers see progress and counts, not the agent's working notes: the
+    # per-step text names sources and search terms, and the log is internal.
+    nodes = [{**n, "detail": "", "drop_detail": ""} for n in (state.get("nodes") or idle_nodes)]
     return {
         "active": state.get("active"),
         "run": {
@@ -632,7 +631,7 @@ def workflow_state(me: Me = Depends(current_user), db: Session = Depends(get_db)
             "stopping": run.status == "running" and pipeline.stop_requested(run.campaign_id),
         },
         "nodes": nodes,
-        "log": (run.log or [])[-60:],
+        "log": [],
         **schedule,
     }
 
@@ -640,17 +639,11 @@ def workflow_state(me: Me = Depends(current_user), db: Session = Depends(get_db)
 @router.get("/runs/{run_id}")
 def run_detail(run_id: int, me: Me = Depends(current_user), db: Session = Depends(get_db)):
     r = _owned(db, CampaignRun, run_id, me, "run")
-    queries = db.execute(
-        select(SearchQuery).where(SearchQuery.run_id == run_id)
-    ).scalars().all()
     return {
         "id": r.id, "campaign_id": r.campaign_id, "status": r.status,
         "started_at": r.started_at.isoformat() if r.started_at else None,
         "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-        "stats": r.stats, "log": r.log, "error": r.error,
-        "nodes": (r.stage_state or {}).get("nodes") or [],
-        "current_item": r.current_item,
-        "queries": [{"source": q.source, "query": q.query, "results": q.results_count} for q in queries],
+        "stats": r.stats, "error": r.error,
     }
 
 

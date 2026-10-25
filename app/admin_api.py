@@ -192,6 +192,8 @@ def customer_detail(user_id: int, db: Session = Depends(get_db)):
 
 
 class CustomerPatch(BaseModel):
+    # "suspended" is what the panel calls Blocked: the account and all its data
+    # are kept, but nobody can sign in and its agents and sending are paused.
     status: str | None = None
     name: str | None = Field(None, max_length=160)
     company: str | None = Field(None, max_length=160)
@@ -211,6 +213,7 @@ def update_customer(user_id: int, payload: CustomerPatch, db: Session = Depends(
     if payload.company is not None:
         u.company = payload.company.strip() or None
     db.commit()
+    auth._forget_sessions()  # so a block takes effect now, not after the 60 s cache
     return {"ok": True}
 
 
@@ -234,6 +237,17 @@ def grant_access(user_id: int, payload: GrantIn, me: Me = Depends(admin_only),
 
 class RevokeIn(BaseModel):
     bot: str
+
+
+@router.delete("/customers/{user_id}")
+def delete_customer(user_id: int, db: Session = Depends(get_db)):
+    """Delete the account and everything it owns. This cannot be undone."""
+    from app.scheduler import reschedule
+
+    u = _customer(db, user_id)
+    gone = workspace.delete_account(db, u)
+    reschedule()
+    return {"ok": True, "deleted": gone}
 
 
 @router.post("/customers/{user_id}/revoke")
@@ -304,19 +318,63 @@ class BotIn(BaseModel):
     price_inr_year: int = Field(ge=0, le=100_000_000)
     price_usd_month: int = Field(ge=0, le=1_000_000)
     price_usd_year: int = Field(ge=0, le=10_000_000)
+    # What the bot's agent does, and how long plans last. Optional so an older
+    # page that doesn't send them leaves the current values alone.
+    countries: list[str] | None = None
+    sources: list[str] | None = None
+    schedule_days: str | None = None
+    schedule_time: str | None = None
+    leads_per_run: int | None = Field(None, ge=1, le=500)
+    min_score: int | None = Field(None, ge=0, le=100)
+    trial_hours: int | None = Field(None, ge=1, le=24 * 60)
+    month_days: int | None = Field(None, ge=1, le=366)
+    year_days: int | None = Field(None, ge=1, le=3660)
+
+
+_DAYS = ("mon-fri", "daily", "weekends")
 
 
 @router.put("/bots/{key}")
 def update_bot(key: str, payload: BotIn, db: Session = Depends(get_db)):
+    from app.scheduler import reschedule
+    from app.seed import apply_bot_limits
+    from app.services.compliance import COUNTRY_POLICY
+    from app.services.discovery import available_sources
+
     bot = db.execute(select(Bot).where(Bot.key == key)).scalar_one_or_none()
     if bot is None:
         raise HTTPException(404, "bot not found")
-    data = payload.model_dump()
-    data["features"] = [f.strip()[:120] for f in data["features"] if f.strip()][:8]
+    data = payload.model_dump(exclude_unset=True)
+    if "features" in data:
+        data["features"] = [f.strip()[:120] for f in data["features"] if f.strip()][:8]
+    if "countries" in data:
+        data["countries"] = [c for c in dict.fromkeys(data["countries"] or []) if c in COUNTRY_POLICY]
+        if not data["countries"]:
+            raise HTTPException(400, "Pick at least one country for this bot.")
+    if "sources" in data:
+        known = {s["key"] for s in available_sources()}
+        data["sources"] = [s for s in dict.fromkeys(data["sources"] or []) if s in known]
+    if data.get("schedule_days") not in (None, *_DAYS):
+        raise HTTPException(400, "Run days must be Mon-Fri, every day or weekends.")
+    if data.get("schedule_time"):
+        try:
+            h, m = (int(p) for p in data["schedule_time"].split(":")[:2])
+            assert 0 <= h < 24 and 0 <= m < 60
+        except (ValueError, AssertionError):
+            raise HTTPException(400, "Start time must be HH:MM.")
+        data["schedule_time"] = f"{h:02d}:{m:02d}"
     for k, v in data.items():
-        setattr(bot, k, v)
+        if k in ("trial_hours",) or v is not None:  # trial_hours may be cleared back to the default
+            setattr(bot, k, v)
+    # Every customer's agent for this bot follows the new limits straight away.
+    changed = 0
+    for c in db.execute(select(Campaign).where(Campaign.service_category == key,
+                                               Campaign.owner_id != tenant.admin_id(db))).scalars():
+        changed += apply_bot_limits(c, bot)
     db.commit()
-    return billing.bot_json(bot)
+    if changed:
+        reschedule()
+    return {**billing.bot_json(bot), "agents_updated": changed}
 
 
 # --- payments ----------------------------------------------------------------------
