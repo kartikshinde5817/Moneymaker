@@ -117,30 +117,32 @@ const fmtTime = s => !s ? '—' : new Date(s).toLocaleString(undefined, { day: '
 /* ---------------------------------------------------------------- shell */
 
 const NAV = [
-  { group: 'Workspace' },
-  { key: 'workflow', label: 'Agent', icon: 'M5 3v4a2 2 0 002 2h3m4 0h3a2 2 0 002-2V3M5 21v-4a2 2 0 012-2h10a2 2 0 012 2v4M12 9v6' },
-  { key: 'outbox', label: 'Outbox', icon: 'M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z' },
-  { key: 'dashboard', label: 'Dashboard', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2' },
-  { key: 'linkedin', label: 'LinkedIn', icon: 'M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-4 0v7h-4v-11h4v2a4 4 0 014-2zM2 9h4v12H2zM4 2a2 2 0 110 4 2 2 0 010-4z' },
-  { key: 'whatsapp', label: 'WhatsApp', icon: 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z' },
-  { key: 'leads', label: 'Leads', icon: 'M3 6h18M3 12h18M3 18h12' },
-  { key: 'campaigns', label: 'Campaigns', icon: 'M12 2v4m0 12v4M2 12h4m12 0h4M6 6l3 3m6 6l3 3m0-12l-3 3m-6 6l-3 3' },
-  { group: 'Account' },
+  { group: 'Workspace', ws: true },
+  { key: 'workflow', ws: true, label: 'Agent', icon: 'M5 3v4a2 2 0 002 2h3m4 0h3a2 2 0 002-2V3M5 21v-4a2 2 0 012-2h10a2 2 0 012 2v4M12 9v6' },
+  { key: 'outbox', ws: true, label: 'Outbox', icon: 'M3 8l9 6 9-6M3 8v9a1 1 0 001 1h16a1 1 0 001-1V8l-9-6-9 6z' },
+  { key: 'dashboard', ws: true, label: 'Dashboard', icon: 'M4 20V10M10 20V4M16 20v-7M22 20H2' },
+  { key: 'linkedin', ws: true, label: 'LinkedIn', icon: 'M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-4 0v7h-4v-11h4v2a4 4 0 014-2zM2 9h4v12H2zM4 2a2 2 0 110 4 2 2 0 010-4z' },
+  { key: 'whatsapp', ws: true, label: 'WhatsApp', icon: 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z' },
+  { key: 'leads', ws: true, label: 'Leads', icon: 'M3 6h18M3 12h18M3 18h12' },
+  { key: 'campaigns', ws: true, label: 'Campaigns', icon: 'M12 2v4m0 12v4M2 12h4m12 0h4M6 6l3 3m6 6l3 3m0-12l-3 3m-6 6l-3 3' },
+  { group: 'Account', customer: true },
   { key: 'bots', label: 'My bots', customer: true, icon: 'M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.4 7.2 16.9l.9-5.4L4.2 7.7l5.4-.8L12 2z' },
   { key: 'billing', label: 'Billing', customer: true, icon: 'M2 7h20v12H2zM2 11h20M6 15h4' },
-  { key: 'account', label: 'Settings', icon: 'M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h3m12 0h3M12 3v3m0 12v3' },
-  { group: 'Admin', admin: true },
+  { key: 'account', label: 'Settings', customer: true, icon: 'M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h3m12 0h3M12 3v3m0 12v3' },
+  { group: 'Platform', admin: true },
   { key: 'admin', label: 'Overview', admin: true, icon: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z' },
   { key: 'customers', label: 'Customers', admin: true, icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
   { key: 'adminbots', label: 'Bots & pricing', admin: true, icon: 'M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L2 12V2h10l8.6 8.6a2 2 0 010 2.8zM7 7h.01' },
   { key: 'payments', label: 'Payments', admin: true, icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6' },
-  { key: 'settings', label: 'Platform', admin: true, icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6' },
+  { key: 'settings', label: 'Settings', admin: true, icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6' },
 ];
 
 const isAdmin = () => !!(META.user && META.user.role === 'admin');
 
-// The admin never buys bots, so the customer-only pages stay out of their sidebar.
-const navItems = () => NAV.filter(n => isAdmin() ? !n.customer : !n.admin);
+// The admin runs the platform and has no workspace of its own: its sidebar is
+// the admin panel only. Customers never see the admin pages.
+const navItems = () => NAV.filter(n => isAdmin() ? n.admin : !n.admin);
+const ADMIN_VIEWS = new Set(NAV.filter(n => n.admin && n.key).map(n => n.key));
 
 function renderNav(pending) {
   $('#nav').innerHTML = navItems().map(n => n.group
@@ -197,6 +199,7 @@ function renderFoot() {
 
 const VIEWS = {};
 async function go(v) {
+  if (isAdmin() && !ADMIN_VIEWS.has(v)) v = 'admin';
   const view = $('#view'), changed = VIEW !== v || !view.childElementCount;
   VIEW = v;
   if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
@@ -331,12 +334,11 @@ function animateNumber(node, to) {
   if (from) { node.classList.remove('bump'); void node.offsetWidth; node.classList.add('bump'); }
 }
 
-let _wfTimer = null, _wfTick = null, _wf = null, _heroKey = '', _flowKey = '';
+let _wfTimer = null, _wfTick = null, _wf = null, _heroKey = '', _flowKey = '', _wfSeq = 0;
 
 VIEWS.workflow = async function () {
   clearTimeout(_wfTimer);
   clearInterval(_wfTick);
-  stopDemo();
   _heroKey = _flowKey = '';
   const [wf, camps] = await Promise.all([api('/api/workflow'), api('/api/campaigns')]);
 
@@ -390,9 +392,11 @@ VIEWS.workflow = async function () {
 async function paintWorkflow(pre) {
   if (!$('#wfCanvas')) return;
   let wf = pre;
+  const seq = ++_wfSeq;
   if (!wf) {
-    try { wf = await api('/api/workflow', { quiet: true }); } catch (e) { pollWorkflow(_wf); return; }
+    try { wf = await api('/api/workflow', { quiet: true }); } catch (e) { if (seq === _wfSeq) pollWorkflow(_wf); return; }
     if (!$('#wfCanvas')) return;  // left the page while the request was in flight
+    if (seq !== _wfSeq) return;   // a newer refresh started; never paint an older state over it
   }
   _wf = wf;
   const running = !!wf.run && wf.run.status === 'running';
@@ -563,6 +567,7 @@ function paintFlow(wf, running) {
           <span id="wfChip"></span>
           <div><h3>Pipeline</h3><div class="wf-sub" id="wfSub"></div></div>
         </div>
+        <div class="wf-rail" aria-hidden="true"><i></i></div>
         <div class="wf-flow">${nodes.map((n, i) => `
           ${i ? `<div class="conn" data-i="${i}" style="--c1:${tint(nodes[i - 1].key)};--c2:${tint(n.key)}"><span class="line"></span><b class="pkg"></b><b class="pkg"></b></div>` : ''}
           <div class="node" data-k="${esc(n.key)}" style="--i:${i};--c:${tint(n.key)}">
@@ -570,7 +575,7 @@ function paintFlow(wf, running) {
               <svg class="ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" transform="rotate(-90 32 32)"/></svg>
               <span class="fx"><i></i><i></i><i></i></span>
               ${svgIcon(NODE_ICONS[n.icon] || NODE_ICONS.doc, 20)}
-              <span class="okb">✓</span>
+              <span class="okb">✓</span><span class="gain"></span>
               ${n.engine === 'llm' ? '<span class="eng">LLM</span>' : ''}
             </div>
             <div class="nname">${esc(n.label)}</div>
@@ -582,7 +587,7 @@ function paintFlow(wf, running) {
         <div class="legend">
           <span><i style="background:var(--acc)"></i>Working now</span>
           <span><i style="background:#E8EEF4"></i>Done</span>
-          <span><i class="lg-pkg"></i>A prospect moving to the next step</span>
+          <span><i class="lg-pkg"></i>A real prospect moving on — only while an agent runs</span>
           <span style="color:#E58E8E">✕ Rejected at this step</span>
           ${META.ai_ready ? '<span><b class="lg-llm">AI</b>Claude step, billed by Anthropic per use</span>'
             : '<span>Free mode: rules and templates, no paid AI</span>'}
@@ -591,16 +596,29 @@ function paintFlow(wf, running) {
   }
 
   const activeIdx = nodes.findIndex(n => n.key === wf.active);
-  // The last step the latest run reached. The idle animation stops there, so
-  // it never shows packages arriving somewhere the run did not get to.
+  // The last step the latest run reached.
   let reach = -1;
   nodes.forEach((n, i) => { if (n.status === 'done' || n.status === 'error' || n.passed > 0) reach = i; });
-  canvas.dataset.reach = run ? reach : nodes.length - 1;
+  canvas.querySelector('.wf').classList.toggle('live', running);
+
+  // Progress along the stages: up to the working step while live, and where
+  // the last run got to otherwise.
+  const rail = canvas.querySelector('.wf-rail i');
+  const share = !run || !nodes.length ? 0 : running ? (Math.max(activeIdx, 0) + .5) / nodes.length
+    : (reach + 1) / nodes.length;
+  if (rail) rail.style.width = (share * 100).toFixed(1) + '%';
+
+  // Real progress only: compare each step's count with the previous poll of
+  // the same run, and animate the steps whose count went up.
+  const prev = canvas._runId === (run && run.id) ? canvas._counts || null : null;
+  canvas._runId = run && run.id;
+  canvas._counts = Object.fromEntries(nodes.map(n => [n.key, n.passed || 0]));
+  let burst = 0;
 
   nodes.forEach((n, i) => {
     const node = canvas.querySelector(`.node[data-k="${n.key}"]`);
     if (!node) return;
-    const keep = !running && node.classList.contains('work') ? ' work' : '';
+    const keep = node.classList.contains('work') ? ' work' : '';
     const status = !running && n.status === 'running' ? (n.passed ? 'done' : 'idle') : n.status;
     node.className = `node ${status}${running && n.key === wf.active ? ' running' : ''}${keep}`;
     node.title = [n.detail || n.note,
@@ -611,11 +629,13 @@ function paintFlow(wf, running) {
     if (conn) {
       // While live, packages keep flowing into the step that is working.
       const state = running && i === activeIdx ? ' flow' : i <= reach && nodes[i - 1].passed > 0 ? ' past' : '';
-      conn.className = `conn${state}${!running && conn.classList.contains('send') ? ' send' : ''}`;
+      conn.className = `conn${state}${conn.classList.contains('send') ? ' send' : ''}`;
     }
+    // Includes the poll where the run ends, so the last burst of work plays
+    // too; steps that moved together play one after another, in pipeline order.
+    const gained = prev ? (n.passed || 0) - (prev[n.key] || 0) : 0;
+    if (gained > 0 && !REDUCED_MOTION) pulseStep(canvas, node, i, gained, 380 * burst++);
   });
-  if (running) stopDemo();
-  else if (!_demoTimer) startDemo();
 
   setHtml($('#wfChip'), !run ? '<span class="wf-live idle"><span class="bl"></span>NO RUNS YET</span>'
     : running ? '<span class="wf-live run"><span class="bl"></span>RUNNING</span>'
@@ -658,40 +678,19 @@ function paintFlow(wf, running) {
   }
 }
 
-let _demoTimer = null;
-
-// Between runs, one package travels the pipeline. Each step it reaches plays
-// its own short animation, then the lap pauses and starts again.
-function startDemo() {
-  stopDemo();
-  if (REDUCED_MOTION) return;
-  let step = 0;
-  const tick = () => {
-    const canvas = $('#wfCanvas');
-    if (VIEW !== 'workflow' || !canvas) { stopDemo(); return; }
-    const nodes = [...canvas.querySelectorAll('.node')];
-    const last = Math.min(+canvas.dataset.reach, nodes.length - 1);
-    if (!(last >= 0)) { _demoTimer = setTimeout(tick, 3000); return; }
-    const i = step % (last + 2);  // the extra beat is the pause before the next lap
-    step++;
-    if (i <= last) {
-      const conn = canvas.querySelector(`.conn[data-i="${i}"]`);
-      if (conn) {
-        flash(conn, 'send', 850);
-        setTimeout(() => { if (_demoTimer) flash(nodes[i], 'work', 1300); }, 650);
-      } else {
-        flash(nodes[i], 'work', 1300);
-      }
-    }
-    _demoTimer = setTimeout(tick, i <= last ? 1500 : 2400);
+// One real event: prospects reached this step since the last poll. A package
+// travels in along the connector, the step plays its animation and a "+N"
+// floats up from it.
+function pulseStep(canvas, node, i, gained, delay = 0) {
+  const conn = i && canvas.querySelector(`.conn[data-i="${i}"]`);
+  const land = () => {
+    flash(node, 'work', 1300);
+    const g = node.querySelector('.gain');
+    if (g) { g.textContent = '+' + gained.toLocaleString(); flash(g, 'show', 1500); }
   };
-  _demoTimer = setTimeout(tick, 700);
-}
-
-function stopDemo() {
-  clearTimeout(_demoTimer);
-  _demoTimer = null;
-  document.querySelectorAll('#wfCanvas .work, #wfCanvas .send').forEach(el => el.classList.remove('work', 'send'));
+  setTimeout(() => {
+    if (conn) { flash(conn, 'send', 850); setTimeout(land, 650); } else land();
+  }, delay);
 }
 
 // Put a class on just long enough for its animation to play once, restarting
@@ -1745,8 +1744,8 @@ async function showRun(runId) {
 
 VIEWS.settings = async function () {
   if (!isAdmin()) return go('account');  // server-wide settings are the admin's
-  const [s, boxes, sched, me] = await Promise.all([
-    api('/api/settings'), api('/api/mailboxes'), api('/api/scheduler'), api('/auth/me'),
+  const [s, sched, me] = await Promise.all([
+    api('/api/settings'), api('/api/scheduler'), api('/auth/me'),
   ]);
   const yn = v => v ? '<span class="pill sent">configured</span>' : '<span class="pill rejected">not set</span>';
 
@@ -1772,12 +1771,9 @@ VIEWS.settings = async function () {
     </div>
 
     <div class="card"><h3>Free keys — get these in order</h3>
-      <p class="hint">All free. The top one matters most: it feeds all four
-         campaigns and every result it returns is a live website the audit can
-         mine for an email address.</p>
+      <p class="hint">All free, and shared by every customer's agents. The top one matters most:
+         every result it returns is a live website the audit can mine for an email address.</p>
       <div id="freeKeys">Loading…</div>
-      <div class="save-row"><button class="btn" id="applyRec">Use recommended sources</button>
-        <span class="muted" style="font-size:12px">Resets each campaign to the best free source list</span></div>
     </div>
 
     <div class="card"><h3>Credentials</h3>
@@ -1795,19 +1791,6 @@ VIEWS.settings = async function () {
       </div>
     </div>
 
-    <div class="card"><h3>Server defaults for your own sending</h3>
-      <p class="hint">These come from the server's environment and are used for your admin
-         account until you set your own in <a href="#account">Settings</a>. Customers always
-         use the mailbox and identity they connect themselves.</p>
-      <div class="grid2">
-        ${[['Company name', s.company_name], ['Sender name', s.sender_name],
-           ['Sender email', s.sender_email], ['Portfolio URL', s.portfolio_url],
-           ['Postal address', s.company_postal_address], ['Privacy policy', s.privacy_policy_url]]
-          .map(([k, v]) => `<div class="inp"><label>${k}</label>
-            <div style="padding:8px 0;font-size:13px">${v ? esc(v) : '<span class="pill rejected">not set</span>'}</div></div>`).join('')}
-      </div>
-    </div>
-
     <div class="card"><h3>Sending limits</h3>
       <div class="row" style="gap:22px;font-size:13px">
         <div><div class="muted" style="font-size:11.5px">Global daily cap</div><b class="mono">${s.daily_email_cap_global}</b></div>
@@ -1815,12 +1798,7 @@ VIEWS.settings = async function () {
         <div><div class="muted" style="font-size:11.5px">Cooling-off</div><b class="mono">${s.cooling_off_days} days</b></div>
         <div><div class="muted" style="font-size:11.5px">Min score to email</div><b class="mono">${s.min_score_to_email}</b></div>
       </div>
-      ${boxes.length ? `<div style="margin-top:14px">${boxes.map(m => `
-        <div class="row" style="padding:7px 0;border-top:1px solid var(--line);font-size:12.5px">
-          <span class="mono">${esc(m.address)}</span>
-          <span class="muted">sent ${m.sent_today} of ${m.effective_cap_today} today</span>
-          ${m.effective_cap_today < m.daily_cap ? '<span class="tag">warming up</span>' : ''}
-        </div>`).join('')}</div>` : '<p class="hint" style="margin:12px 0 0">No mailbox registered yet. Set SENDER_EMAIL and restart.</p>'}
+      <p class="hint" style="margin:12px 0 0">Each customer sends from the mailbox they connect in their own Settings; these limits apply on top.</p>
     </div>
 
     <div class="card"><h3>Scheduled jobs</h3>
@@ -1868,12 +1846,6 @@ VIEWS.settings = async function () {
             }).join('')}</span>
           </div>`).join('')}
       </div>`;
-    $('#applyRec').onclick = async () => {
-      try {
-        const r = await post('/api/sources/apply-recommended');
-        toast(`Updated ${r.campaigns_updated} campaigns`, 'good');
-      } catch (e) { toast(e.message, 'bad'); }
-    };
   } catch (e) { $('#freeKeys').innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
 
   if ($('#logoutBtn')) $('#logoutBtn').onclick = async () => {

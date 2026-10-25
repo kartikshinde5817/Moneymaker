@@ -76,6 +76,9 @@ def _owned(db: Session, model, row_id: int, me: Me, what: str = "item"):
 
 
 def _require_bot(db: Session, me: Me, bot_key: str) -> None:
+    if me.is_admin:
+        raise HTTPException(403, "The admin account runs the platform and has no agents of its own. "
+                                 "Sign in with a customer account to run bots.")
     if not billing.has_access(db, me.id, bot_key):
         raise HTTPException(402, f"You don't have access to the {catalog.label_for(bot_key)} bot. "
                                  f"Start a free trial or subscribe under My bots.")
@@ -1209,11 +1212,11 @@ def _key_configured(name: str) -> bool:
 
 
 @router.post("/sources/apply-recommended")
-def apply_recommended(me: Me = Depends(admin_only), db: Session = Depends(get_db)):
+def apply_recommended(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from app.seed import apply_recommended_sources
     from app.scheduler import reschedule
 
-    changed = apply_recommended_sources(db)
+    changed = apply_recommended_sources(db, me.id)
     reschedule()
     return {"ok": True, "campaigns_updated": changed}
 

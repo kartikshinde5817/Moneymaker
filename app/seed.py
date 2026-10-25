@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import BASE_DIR
-from app.models import Campaign, Company, Lead, Mailbox, utcnow
+from app.models import Campaign, Company, Lead, utcnow
 from app.services.compliance import email_policy_for_country
 from app.services.resolution import normalize_name
 
@@ -176,46 +176,6 @@ def starter_campaign(db: Session, owner_id: int, bot_key: str) -> Campaign | Non
     return campaign
 
 
-def seed_campaigns(db: Session) -> int:
-    """The platform owner's own agents, one per built-in bot."""
-    from app.services.tenant import admin_id
-
-    owner = admin_id(db)
-    made = 0
-    for spec in DEFAULT_CAMPAIGNS:
-        exists = db.execute(
-            select(Campaign).where(Campaign.owner_id == owner,
-                                   Campaign.service_category == spec["service_category"])
-        ).scalars().first()
-        if exists:
-            continue
-        db.add(_campaign_from_spec(spec, owner))
-        made += 1
-    db.commit()
-    return made
-
-
-def seed_mailbox(db: Session) -> None:
-    from app.config import settings
-    from app.services.tenant import admin_id
-
-    if not settings.sender_email:
-        return
-    exists = db.execute(
-        select(Mailbox).where(Mailbox.address == settings.sender_email)
-    ).scalar_one_or_none()
-    if exists:
-        return
-    db.add(Mailbox(
-        owner_id=admin_id(db),
-        address=settings.sender_email,
-        display_name=settings.sender_name or "",
-        provider="smtp",
-        daily_cap=settings.per_mailbox_daily_cap,
-    ))
-    db.commit()
-
-
 LEGACY_DB = BASE_DIR / "legacy" / "old_app.db"
 
 
@@ -269,18 +229,16 @@ def migrate_legacy(db: Session) -> int:
     return moved
 
 
-def apply_recommended_sources(db: Session) -> int:
-    """Reset every campaign to the recommended free source list.
+def apply_recommended_sources(db: Session, owner_id: int) -> int:
+    """Reset one account's agents to the recommended free source list.
 
     Used by the "Use recommended sources" button, so an existing database
     picks up a better configuration without being wiped.
     """
-    from app.services.tenant import admin_id
-
     changed = 0
     for spec in DEFAULT_CAMPAIGNS:
         campaign = db.execute(
-            select(Campaign).where(Campaign.owner_id == admin_id(db),
+            select(Campaign).where(Campaign.owner_id == owner_id,
                                    Campaign.service_category == spec["service_category"])
         ).scalars().first()
         if not campaign:
@@ -295,14 +253,13 @@ def apply_recommended_sources(db: Session) -> int:
 
 
 def bootstrap(db: Session) -> dict:
+    """Startup seeding: the bot catalogue only.
+
+    The admin account runs the platform and has no agents of its own, so no
+    campaigns or mailboxes are created here. Customers get a ready-made agent
+    when they unlock a bot (see starter_campaign).
+    """
     from app.services.billing import seed_bots
 
     seed_bots(db)
-    # The legacy import is deliberately NOT run automatically any more. Those
-    # rows carry no evidence - just a business name - so they cannot be
-    # qualified, scored or written to, and they drown out real leads. Import
-    # them by hand with POST /api/legacy/import if you want them as history.
-    return {
-        "campaigns_created": seed_campaigns(db),
-        "legacy_leads_migrated": 0,
-    }
+    return {}

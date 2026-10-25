@@ -462,6 +462,7 @@ VIEWS.admin = async function () {
       <div class="row"><button class="btn" onclick="go('customers')">Customers</button><button class="btn primary" onclick="go('adminbots')">Bots & pricing</button></div></div>
     ${!o.razorpay_ready ? '<div class="banner bad">Razorpay is not connected, so customers cannot pay. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET on the server.</div>'
       : !o.webhook_ready ? '<div class="banner">Set RAZORPAY_WEBHOOK_SECRET so payments are confirmed even when a customer closes the tab before returning.</div>' : ''}
+    ${transferCard(o.admin_workspace)}
     <div class="kpis k6">
       ${kpi('Customers', n(o.customers), { sub: `+${o.new_7d} this week · +${o.new_30d} this month`, icon: I.users, i: 0 })}
       ${kpi('Paying customers', n(o.paying_customers), { sub: `${o.active_subscriptions} active plans`, icon: I.card, tone: 'good', i: 1 })}
@@ -678,6 +679,46 @@ VIEWS.payments = async function () {
   await paint();
 };
 
+/* ------------------------------------------------- move the admin workspace */
+
+// The admin account ran the agents before the app had customers. Until that
+// work is handed to a customer account, Overview offers to move it.
+const WS_LABEL = { campaigns: 'agents', campaign_runs: 'runs', leads: 'leads', email_messages: 'emails',
+  whatsapp_messages: 'WhatsApp messages', mailboxes: 'mailboxes', suppressions: 'unsubscribes' };
+
+function transferCard(ws) {
+  const items = Object.entries(ws || {}).filter(([, n]) => n);
+  if (!items.length) return '';
+  return `<div class="card xfer">
+    ${cardHead('M5 12h14M13 6l6 6-6 6', 'Move your old workspace to a customer account',
+      'The admin account only runs the platform. Hand its agents and data to the account you will work from.')}
+    <div class="xfer-chips">${items.map(([k, n]) => `<span><b>${n.toLocaleString()}</b> ${esc(WS_LABEL[k] || k)}</span>`).join('')}</div>
+    <div class="grid3" style="margin-top:12px">
+      <div class="inp"><label for="xfEmail">Customer email</label><input id="xfEmail" type="email" placeholder="you@example.com" autocomplete="off"></div>
+      <div class="inp"><label for="xfPass">Password for that account</label><input id="xfPass" type="password" placeholder="at least 8 characters" autocomplete="new-password">
+        <span class="fine">Needed when the account is new. Leave empty to keep an existing password.</span></div>
+      <div class="inp"><label for="xfName">Name</label><input id="xfName" placeholder="optional"></div>
+    </div>
+    <p class="hint">Mailbox and sender settings are copied over, and the account gets access to the bots its agents use.
+      The admin keeps only the platform: customers, bots, prices and payments.</p>
+    <div class="save-row"><button class="btn primary" id="xfGo" onclick="transferWorkspace()">Move everything</button></div>
+  </div>`;
+}
+
+async function transferWorkspace() {
+  const email = $('#xfEmail').value.trim(), password = $('#xfPass').value, name = $('#xfName').value.trim();
+  if (!email) { toast('Enter the customer email', 'bad'); return; }
+  if (!confirm(`Move all agents, leads and emails from the admin account to ${email}? This cannot be undone from the panel.`)) return;
+  const b = $('#xfGo');
+  b.disabled = true; b.innerHTML = '<span class="spin"></span> Moving…';
+  try {
+    const r = await post('/api/admin/transfer-workspace', { email, password, name });
+    const m = r.moved || {};
+    toast(`${r.created ? 'Created' : 'Updated'} ${r.email}: moved ${m.campaigns || 0} agents, ${m.leads || 0} leads, ${m.email_messages || 0} emails`, 'good');
+    VIEWS.admin();
+  } catch (e) { toast(e.message, 'bad'); b.disabled = false; b.textContent = 'Move everything'; }
+}
+
 /* ------------------------------------------------------------- startup */
 
 window.addEventListener('hashchange', () => {
@@ -689,8 +730,10 @@ window.addEventListener('hashchange', () => {
   try {
     META = await api('/api/meta');
     syncServices();
-    const s = await api('/api/stats/summary', { quiet: true });
-    window._pending = s.pending_approval;
+    if (!isAdmin()) {
+      const s = await api('/api/stats/summary', { quiet: true });
+      window._pending = s.pending_approval;
+    }
   } catch (e) {
     if (/Not authenticated/.test(e.message)) { location.href = '/login'; return; }
     $('#view').innerHTML = `<div class="banner bad">Could not reach the server: ${esc(e.message)}</div>`;
@@ -698,7 +741,7 @@ window.addEventListener('hashchange', () => {
   }
   renderFoot(); renderMe(); renderAccessBar();
   const hash = (location.hash || '').replace('#', '');
-  const hasBots = isAdmin() || Object.keys(META.access || {}).length;
-  go(VIEWS[hash] ? hash : hasBots ? 'workflow' : 'bots');
+  const start = isAdmin() ? 'admin' : Object.keys(META.access || {}).length ? 'workflow' : 'bots';
+  go(VIEWS[hash] ? hash : start);
   setInterval(() => { if (!isAdmin()) renderAccessBar(); }, 60000);
 })();

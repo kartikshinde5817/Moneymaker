@@ -20,7 +20,7 @@ from app.db import get_db
 from app.models import (
     Bot, Campaign, CampaignRun, EmailMessage, Lead, Payment, Subscription, User, as_aware, utcnow,
 )
-from app.services import auth, billing
+from app.services import auth, billing, tenant, workspace
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_only)])
 
@@ -108,6 +108,9 @@ def overview(db: Session = Depends(get_db)):
                             "created_at": _iso(u.created_at)} for u in recent_users],
         "razorpay_ready": billing.razorpay_ready(),
         "webhook_ready": bool(settings.razorpay_webhook_secret),
+        # Agents, leads and emails still owned by the admin account, from
+        # before the app had customers. The panel offers to move them.
+        "admin_workspace": workspace.counts(db, tenant.admin_id(db)),
     }
 
 
@@ -252,6 +255,25 @@ def reset_password(user_id: int, payload: ResetIn, db: Session = Depends(get_db)
     auth.destroy_all_sessions(db, u.id)
     db.commit()
     return {"ok": True}
+
+
+class TransferIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field("", max_length=200)
+    name: str = Field("", max_length=160)
+
+
+@router.post("/transfer-workspace")
+def transfer_workspace(payload: TransferIn, db: Session = Depends(get_db)):
+    """Hand the admin's own agents, leads and emails to a customer account."""
+    if "@" not in payload.email:
+        raise HTTPException(422, "Enter a valid email address.")
+    try:
+        return {"ok": True, **workspace.transfer_admin_workspace(
+            db, email=payload.email, password=payload.password, name=payload.name)}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
 
 
 # --- bots & prices -------------------------------------------------------------------
