@@ -81,6 +81,8 @@ def transfer_admin_workspace(db: Session, *, email: str, password: str = "",
             raise ValueError("Set a password of at least 8 characters for the new account.")
         user = auth.create_customer(db, email=email, password=password,
                                     name=name or email.split("@")[0])
+        from app.models import utcnow
+        user.email_verified_at = utcnow()  # the admin is vouching for this address
     elif user.role != "customer":
         raise ValueError("That email belongs to the admin account.")
     elif password:

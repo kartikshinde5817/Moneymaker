@@ -166,9 +166,10 @@ function renderNav(pending) {
 function systemChecks(o) {
   const pcSender = META.send_on_server === false;
   const list = [
-    { name: 'Sending email', ok: pcSender || !!META.email_ready, icon: 'M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z',
-      on: pcSender ? 'Approved mail goes out from your computer sender' : 'SMTP is set, so approved mail can go out',
-      off: 'No SMTP yet, so approved mail cannot leave. Set SMTP_HOST, SMTP_USER and SMTP_PASS.' },
+    { name: 'Sending email', ok: !pcSender && META.public_url_ok !== false, icon: 'M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z',
+      on: 'The server sends approved mail from each user\'s own mailbox',
+      off: pcSender ? 'SEND_ON_SERVER=false: the server never sends, so approved mail waits for the computer sender. On a paid Render plan set SEND_ON_SERVER=true.'
+        : 'PUBLIC_BASE_URL is not your live address, so nothing is sent (unsubscribe links would break). Set it to https://your-app.onrender.com' },
     { name: 'Reply watch', ok: !!META.inbox_ready, icon: 'M21 11.5a8.4 8.4 0 01-12 7.6L3 21l1.9-5.7A8.4 8.4 0 1121 11.5z',
       on: 'The inbox is read every 5 minutes for replies and bounces',
       off: 'Replies and bounces are not read. Set IMAP_HOST.' },
@@ -896,16 +897,31 @@ VIEWS.dashboard = async function () {
 /* ---------------------------------------------------------------- outbox */
 
 VIEWS.outbox = async function () {
-  const [msgs, sum] = await Promise.all([
-    api('/api/outbox?status=pending_approval'), api('/api/outbox/summary'),
+  const [msgs, sum, queued] = await Promise.all([
+    api('/api/outbox?status=pending_approval'), api('/api/outbox/summary'), api('/api/outbox?status=queued'),
   ]);
   window._pending = msgs.length;
   const pc = sum.pc_sender;
   const remote = !sum.send_on_server;
 
-  const warn = [];
-  if (!META.email_ready && !remote) warn.push('SMTP is not configured, so nothing can actually be sent yet. Add SMTP settings to your .env file.');
-  if (!META.sender_configured) warn.push('SENDER_EMAIL and COMPANY_POSTAL_ADDRESS must both be set before sending — the postal address is required by US CAN-SPAM law.');
+  const blockers = sum.blockers || [];
+  const mine = blockers.filter(b => b.who === 'you'), theirs = blockers.filter(b => b.who !== 'you');
+  const blockCard = blockers.length ? `<div class="card blockers">
+      ${cardHead('M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
+        'Why approved emails are not going out', 'Fix these and the queued emails send automatically')}
+      ${blockers.map(b => `<div class="blk"><span class="who ${b.who === 'you' ? 'you' : ''}">${b.who === 'you' ? 'You' : 'Platform'}</span>
+        <div><b>${esc(b.problem)}</b><small>${esc(b.who === 'you' ? b.fix : (isAdmin() ? b.fix : 'The platform team needs to fix this. Your emails stay queued and go out once it is fixed.'))}</small></div>
+        ${b.who === 'you' ? '<button class="btn sm" onclick="go(\'account\')">Open Settings</button>' : ''}</div>`).join('')}
+    </div>` : '';
+  const queuedCard = queued.length ? `<div class="card">
+      ${cardHead(NODE_ICONS.clock, `Approved — waiting to send (${queued.length})`,
+        blockers.length ? 'These go out as soon as the problems above are fixed' : 'They go out within about 10 minutes, within your daily limit',
+        !remote && !blockers.length ? '<button class="btn sm primary" onclick="dispatchNow()">Send now</button>' : '')}
+      ${queued.map(m => `<div class="lrow">
+        <div class="who"><b>${esc(m.company)}</b><small>${esc(m.to_email)} · ${esc(m.subject)}</small>
+          ${m.failure_reason ? `<small class="why">Last try: ${esc(m.failure_reason)}</small>` : ''}</div>
+      </div>`).join('')}
+    </div>` : '';
 
   $('#view').innerHTML = `
     <div class="head">
@@ -917,8 +933,9 @@ VIEWS.outbox = async function () {
         ${msgs.length ? `<button class="btn primary" id="sendAll">${remote ? 'Approve' : 'Approve &amp; send'} all (${msgs.length})</button>` : ''}
       </div>
     </div>
-    ${warn.map(w => `<div class="banner">${esc(w)}</div>`).join('')}
-    ${remote || sum.queued || sum.failed ? `
+    ${blockCard}
+    ${queuedCard}
+    ${(remote && isAdmin()) || sum.failed ? `
     <div class="card sendbar">
       ${remote ? `<span class="pcdot ${pc.alive ? 'on' : ''}"></span>
         <div style="flex:1;min-width:220px">
@@ -1849,7 +1866,10 @@ async function stopRun(campaignId) {
 async function dispatchNow() {
   try {
     const r = await post('/api/outbox/dispatch');
-    toast(`Sent ${r.sent}, failed ${r.failed}, skipped ${r.skipped}`, r.failed ? 'bad' : 'good');
+    const why = (r.details || [])[0];
+    toast(r.sent ? `Sent ${r.sent}${r.failed ? `, ${r.failed} failed` : ''}` : why ? `Nothing sent: ${why}` : 'Nothing to send',
+      r.sent && !r.failed ? 'good' : 'bad');
+    if (VIEW === 'outbox') go('outbox');
   } catch (e) { toast(e.message, 'bad'); }
 }
 

@@ -131,6 +131,7 @@ def meta(me: Me = Depends(current_user), db: Session = Depends(get_db)):
         "razorpay_ready": billing.razorpay_ready(),
         "ai_ready": ai.available(),
         "send_on_server": settings.send_on_server,
+        "public_url_ok": mailer.public_url_is_reachable(),
         "email_ready": cfg.smtp_ready,
         "sender_configured": cfg.sender_ready,
         "sources": available_sources(),
@@ -1029,7 +1030,8 @@ def dispatch_now(limit: int = 25, me: Me = Depends(current_user), db: Session = 
 @router.get("/outbox/summary")
 def outbox_summary(me: Me = Depends(current_user), db: Session = Depends(get_db)):
     from app.services import sender
-    return {**sender.outbox_summary(db, me.id), "send_on_server": settings.send_on_server}
+    return {**sender.outbox_summary(db, me.id), "send_on_server": settings.send_on_server,
+            "blockers": mailer.sending_blockers(db, me.id)}
 
 
 @router.post("/outbox/retry-failed")

@@ -212,6 +212,45 @@ def public_url_is_reachable() -> bool:
     return host not in ("localhost", "127.0.0.1", "0.0.0.0", "::1") and "." in host
 
 
+def sending_blockers(db: Session, owner_id: int) -> list[dict]:
+    """Everything that stops this account's approved emails going out, in plain words.
+
+    `who` says who can fix it: "you" (the user, in Settings) or "admin" (the
+    platform owner, in the server's environment).
+    """
+    from app.models import AppState, User
+    from app.services.tenant import config_for
+
+    out: list[dict] = []
+    if not settings.send_on_server:
+        beat = db.get(AppState, "pc_sender")
+        alive = bool(beat and utcnow() - as_aware(beat.updated_at) < dt.timedelta(minutes=3))
+        if not alive:
+            out.append({"who": "admin", "problem": "The server is set not to send email (SEND_ON_SERVER=false), "
+                        "and the computer sender (run.py --send-only) is not running.",
+                        "fix": "On a paid Render plan set SEND_ON_SERVER=true, or start the computer sender."})
+    if not public_url_is_reachable():
+        out.append({"who": "admin", "problem": "PUBLIC_BASE_URL is not a public address, so unsubscribe links "
+                    "would not work and nothing is sent.",
+                    "fix": "Set PUBLIC_BASE_URL to the live site address, e.g. https://your-app.onrender.com"})
+    user = db.get(User, owner_id)
+    if user is not None and user.status != "active":
+        out.append({"who": "admin", "problem": "This account is blocked.", "fix": "Unblock it in Users."})
+    cfg = config_for(db, owner_id)
+    if not cfg.smtp_ready:
+        out.append({"who": "you", "problem": "No mailbox is connected.",
+                    "fix": "Add your SMTP details in Settings and press Test connection."})
+    if not cfg.sender_email:
+        out.append({"who": "you", "problem": "Your sender email is not set.", "fix": "Add it in Settings."})
+    if not cfg.postal_address:
+        out.append({"who": "you", "problem": "Your postal address is missing (required by law in every email).",
+                    "fix": "Add it in Settings."})
+    if cfg.smtp_ready and sent_today(db, owner_id=owner_id) >= cfg.daily_cap:
+        out.append({"who": "you", "problem": f"Today's limit of {cfg.daily_cap} emails is reached.",
+                    "fix": "The rest go out tomorrow, or raise the daily limit in Settings."})
+    return out
+
+
 def unsubscribe_url(token: str) -> str:
     return f"{settings.public_base_url.rstrip('/')}/u/{token}"
 
@@ -372,7 +411,8 @@ def send_message(db: Session, message: EmailMessage) -> tuple[bool, str]:
     holder = db.get(User, message.owner_id or lead.owner_id) if (message.owner_id or lead.owner_id) else None
     if holder is not None and holder.status != "active":
         message.status = "queued"
-        return False, "This account is blocked, so nothing is sent."
+        message.failure_reason = "This account is blocked, so nothing is sent."
+        return False, message.failure_reason
 
     gate = check_can_send(db, lead, company, contact, exclude_message_id=message.id)
     if not gate.ok:
@@ -412,7 +452,8 @@ def send_message(db: Session, message: EmailMessage) -> tuple[bool, str]:
 
     if sent_today(db, owner_id=owner) >= cfg.daily_cap:
         message.status = "queued"
-        return False, f"Daily sending limit of {cfg.daily_cap} reached - it will go out tomorrow."
+        message.failure_reason = f"Daily sending limit of {cfg.daily_cap} reached - it will go out tomorrow."
+        return False, message.failure_reason
 
     if not message.unsubscribe_token:
         message.unsubscribe_token = new_unsubscribe_token()
@@ -422,8 +463,9 @@ def send_message(db: Session, message: EmailMessage) -> tuple[bool, str]:
         cap = warmup_cap(mailbox)
         if sent_today(db, mailbox.id) >= cap:
             message.status = "queued"
-            return False, (f"{mailbox.address} is warming up and has reached today's limit of "
-                           f"{cap} - it will go out tomorrow.")
+            message.failure_reason = (f"{mailbox.address} is warming up and has reached today's limit of "
+                                      f"{cap} - it will go out tomorrow.")
+            return False, message.failure_reason
         message.mailbox_id = mailbox.id
 
     message.status = "sending"
